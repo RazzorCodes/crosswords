@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { GridData } from './types';
+import { GridData } from '../types';
 
 interface GameState {
   language: 'en' | 'ro';

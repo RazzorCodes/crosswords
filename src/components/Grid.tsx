@@ -155,7 +155,7 @@ export function GridComponent() {
           <div>
             <h3 className="text-sm font-black mb-3 text-emerald-400 uppercase tracking-tighter border-b border-emerald-400/20 pb-1">Down</h3>
             <ul className="space-y-3">
-              {grid.placements.filter(p => p.direction === 'down').map(p => (
+              {grid.placements.filter((p: any) => p.direction === 'down').map((p: any) => (
                 <li key={`down-${p.number}`} className="text-xs leading-relaxed group cursor-pointer" onClick={() => setSelectedCell({x: p.x, y: p.y})}>
                   <span className={cn(
                     "font-bold mr-2 px-1 rounded transition-colors",
@@ -182,7 +182,7 @@ export function GridComponent() {
           </div>
           <div>
             <h3 className="text-[10px] font-black mb-2 text-emerald-400 uppercase">Down</h3>
-            {grid.placements.filter(p => p.direction === 'down').map(p => (
+            {grid.placements.filter((p: any) => p.direction === 'down').map((p: any) => (
               <div key={`m-down-${p.number}`} className="text-[10px] text-slate-300 mb-1" onClick={() => setSelectedCell({x: p.x, y: p.y})}>
                 <span className="font-bold mr-1">{p.number}.</span> {p.clue}
               </div>
