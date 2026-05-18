@@ -16,6 +16,11 @@ export interface WordPlacement {
   number: number;
 }
 
+export interface WordEntry {
+  word: string;
+  clue: string;
+}
+
 export interface GridData {
   cells: Cell[][];
   placements: WordPlacement[];

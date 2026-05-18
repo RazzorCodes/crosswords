@@ -1,8 +1,6 @@
-export type Point = { x: number; y: number };
+export type Point = { x: number; y: number; t: number };
 
 // Very simple directional / bounding box heuristic recognizer 
-// rather than full $P for brevity, but achieving the same goal:
-// offline, simple heuristic recognition of basic strokes.
 export function recognizeHeuristic(strokes: Point[][]): { char: string; score: number } {
   if (!strokes || strokes.length === 0) return { char: '', score: 0 };
   
@@ -17,7 +15,6 @@ export function recognizeHeuristic(strokes: Point[][]): { char: string; score: n
     }
   }
   
-  const width = maxX - minX;
   const height = maxY - minY;
   
   // Single vertical-ish stroke
@@ -28,13 +25,9 @@ export function recognizeHeuristic(strokes: Point[][]): { char: string; score: n
     const dx = Math.abs(last.x - first.x);
     const dy = Math.abs(last.y - first.y);
     
-    // Likely an 'I'
+    // Likely an 'I', but keep score moderate to allow other candidates/uncertainty
     if (dy > dx * 2 && height > 20) {
-      return { char: 'I', score: 0.9 };
-    }
-    // Likely a minus/hyphen, maybe 'T' crossbar?
-    if (dx > dy * 2 && width > 20) {
-       // Not a standard letter by itself, though could be part of T
+      return { char: 'I', score: 0.7 };
     }
   }
   
@@ -66,6 +59,5 @@ export function recognizeHeuristic(strokes: Point[][]): { char: string; score: n
     }
   }
 
-  // Fallback: This engine is just a basic heuristic. If it can't confidently guess, return low score
   return { char: '?', score: 0 };
 }

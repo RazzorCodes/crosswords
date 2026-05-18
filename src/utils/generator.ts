@@ -1,11 +1,6 @@
-import { Cell, GridData, WordPlacement } from '../types';
+import { Cell, GridData, WordEntry, WordPlacement } from '../types';
 
-interface RawWord {
-  word: string;
-  clue: string;
-}
-
-export function generateCrossword(words: RawWord[], size: number = 15): GridData {
+export function generateCrossword(words: WordEntry[], size: number = 15): GridData {
   const grid: string[][] = Array(size).fill(null).map(() => Array(size).fill(''));
   const placements: WordPlacement[] = [];
   
@@ -50,7 +45,7 @@ export function generateCrossword(words: RawWord[], size: number = 15): GridData
     return true;
   };
 
-  const placeWord = (word: RawWord, x: number, y: number, direction: 'across' | 'down', number: number) => {
+  const placeWord = (word: WordEntry, x: number, y: number, direction: 'across' | 'down', number: number) => {
     for (let i = 0; i < word.word.length; i++) {
       if (direction === 'across') {
         grid[y][x + i] = word.word[i];

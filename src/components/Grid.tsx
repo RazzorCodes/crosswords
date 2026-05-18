@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useGameStore } from '../store/useGameStore';
 import { CellComponent } from './Cell';
 import { DrawingCanvas } from './DrawingCanvas';
+import { SuggestionBubble } from './SuggestionBubble';
+import { submitStrokeData } from '../utils/api';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -10,7 +12,7 @@ function cn(...inputs: ClassValue[]) {
 }
 
 export function GridComponent() {
-  const { grid, selectedCell, setSelectedCell, updateCellInput, hoveredCell, setIsGestureActive } = useGameStore();
+  const { grid, selectedCell, setSelectedCell, updateCellInput, hoveredCell, setIsGestureActive, suggestionState, clearSuggestions } = useGameStore();
   
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -19,14 +21,21 @@ export function GridComponent() {
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (!grid) return;
-    const targetCell = selectedCell || hoveredCell;
+    const targetCell = suggestionState?.cell || selectedCell || hoveredCell;
     if (!targetCell) return;
     const { x, y } = targetCell;
 
     if (e.key === 'Backspace' || e.key === 'Delete') {
       updateCellInput(x, y, '');
+      if (suggestionState) clearSuggestions();
     } else if (e.key.length === 1 && /[a-zA-Z]/.test(e.key)) {
-      updateCellInput(x, y, e.key);
+      if (suggestionState) {
+        void submitStrokeData(e.key.toUpperCase(), suggestionState.strokes);
+        updateCellInput(x, y, e.key);
+        clearSuggestions();
+      } else {
+        updateCellInput(x, y, e.key);
+      }
     } else if (selectedCell && e.key.startsWith('Arrow')) {
       let nx = x, ny = y;
       if (e.key === 'ArrowRight') nx++;
@@ -37,7 +46,7 @@ export function GridComponent() {
         setSelectedCell({ x: nx, y: ny });
       }
     }
-  }, [grid, selectedCell, hoveredCell, updateCellInput, setSelectedCell]);
+  }, [grid, selectedCell, hoveredCell, updateCellInput, setSelectedCell, suggestionState, clearSuggestions]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
@@ -132,6 +141,7 @@ export function GridComponent() {
             ))
           )}
         </div>
+        <SuggestionBubble />
         <DrawingCanvas />
       </div>
       

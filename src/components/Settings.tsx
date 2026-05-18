@@ -1,7 +1,7 @@
 import { useGameStore } from '../store/useGameStore';
 
 export function SettingsComponent() {
-  const { language, setLanguage, showGlow, setShowGlow } = useGameStore();
+  const { language, setLanguage, showGlow, setShowGlow, suggestionState } = useGameStore();
 
   return (
     <div className="flex gap-4 items-center">
@@ -31,6 +31,13 @@ export function SettingsComponent() {
         >
           {showGlow ? 'GLOW ON' : 'GLOW OFF'}
         </button>
+      </div>
+
+      <div className="hidden md:flex items-center gap-2">
+        <span className="text-[10px] text-slate-500 font-bold uppercase">Ink</span>
+        <span className={`px-2 py-0.5 text-xs rounded border ${suggestionState ? 'bg-amber-600/20 text-amber-300 border-amber-600/40' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
+          {suggestionState ? 'CHOICES' : 'AUTO'}
+        </span>
       </div>
     </div>
   );

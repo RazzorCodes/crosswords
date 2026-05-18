@@ -16,7 +16,7 @@
           pname = "crosswords";
           version = "0.1.0";
           src = ./.;
-          npmDepsHash = "sha256-YwV6T7f0CzlnDLSd3A4E9nDlYk/Dxm0xwAf5xSCu0U8=";
+          npmDepsHash = "sha256-bEXOb3XkUqTNMvFOBn8sHFNF9LQAnKiNRuS7KEg3Rtw=";
           installPhase = ''
             mkdir -p $out
             cp -r dist/* $out/
@@ -27,7 +27,7 @@
           pname = "crosswords-node-modules";
           version = "0.1.0";
           src = ./.;
-          npmDepsHash = "sha256-YwV6T7f0CzlnDLSd3A4E9nDlYk/Dxm0xwAf5xSCu0U8=";
+          npmDepsHash = "sha256-bEXOb3XkUqTNMvFOBn8sHFNF9LQAnKiNRuS7KEg3Rtw=";
           dontBuild = true;
           installPhase = ''
             mkdir -p $out

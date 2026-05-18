@@ -1,8 +1,10 @@
 import { useEffect } from 'react';
 import { useGameStore } from './store/useGameStore';
 import { generateCrossword } from './utils/generator';
+import { loadRomanianDictionaryEntries } from './utils/dictionary';
 import { GridComponent } from './components/Grid';
 import { SettingsComponent } from './components/Settings';
+import { ToastContainer } from './components/Toast';
 import enWords from './data/en.json';
 import roWords from './data/ro.json';
 
@@ -10,13 +12,31 @@ function App() {
   const { language, setGrid } = useGameStore();
 
   useEffect(() => {
-    const words = language === 'en' ? enWords : roWords;
-    const newGrid = generateCrossword(words, 15); // Slightly larger grid
-    setGrid(newGrid);
+    let cancelled = false;
+
+    const updateGrid = async () => {
+      let words = enWords;
+      if (language === 'ro') {
+        const importedWords = await loadRomanianDictionaryEntries();
+        words = importedWords.length > 0 ? importedWords : roWords;
+      }
+
+      if (cancelled) return;
+
+      const newGrid = generateCrossword(words, 15);
+      setGrid(newGrid);
+    };
+
+    void updateGrid();
+
+    return () => {
+      cancelled = true;
+    };
   }, [language, setGrid]);
 
   return (
     <div className="w-screen h-screen bg-slate-950 text-slate-200 flex flex-col overflow-hidden">
+      <ToastContainer />
       <header className="p-4 flex flex-col items-center shrink-0 z-40 bg-slate-950/50 backdrop-blur-md border-b border-slate-800">
         <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400 mb-2">
           CROSSWORD
