@@ -1,0 +1,37 @@
+import { useGameStore } from '../store/useGameStore';
+
+export function SettingsComponent() {
+  const { language, setLanguage, showGlow, setShowGlow } = useGameStore();
+
+  return (
+    <div className="flex gap-4 items-center">
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] text-slate-500 font-bold uppercase">Language</span>
+        <div className="flex bg-slate-800 p-0.5 rounded border border-slate-700">
+          <button
+            onClick={() => setLanguage('en')}
+            className={`px-2 py-0.5 text-xs rounded ${language === 'en' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-700'}`}
+          >
+            EN
+          </button>
+          <button
+            onClick={() => setLanguage('ro')}
+            className={`px-2 py-0.5 text-xs rounded ${language === 'ro' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-700'}`}
+          >
+            RO
+          </button>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] text-slate-500 font-bold uppercase">Feedback</span>
+        <button
+          onClick={() => setShowGlow(!showGlow)}
+          className={`px-2 py-0.5 text-xs rounded border transition-colors ${showGlow ? 'bg-green-600/20 text-green-400 border-green-600/50' : 'bg-slate-800 text-slate-400 border-slate-700'}`}
+        >
+          {showGlow ? 'GLOW ON' : 'GLOW OFF'}
+        </button>
+      </div>
+    </div>
+  );
+}
