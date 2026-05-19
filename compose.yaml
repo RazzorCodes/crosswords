@@ -1,5 +1,6 @@
 services:
   app:
+    profiles: ["dev"]
     build:
       context: .
       dockerfile: src/app/Containerfile
@@ -14,6 +15,7 @@ services:
       - srv
 
   srv:
+    profiles: ["dev"]
     build:
       context: .
       dockerfile: src/srv/Containerfile
@@ -30,6 +32,7 @@ services:
       - TEACHER_MODEL_NAME=${TEACHER_MODEL_NAME}
 
   ml:
+    profiles: ["dev"]
     build:
       context: .
       dockerfile: src/ml/Containerfile
@@ -43,6 +46,16 @@ services:
       - TRAIN_MIN_INTERVAL_SECONDS=60
       - TRAIN_MIN_SAMPLES_DELTA=10
     command: ["python", "src/ml/train_loop.py"]
+
+  app-release:
+    profiles: ["release"]
+    build:
+      context: .
+      dockerfile: src/app/Containerfile.release
+    ports:
+      - "5173:80"
+    environment:
+      - MODEL_BASE_URL=${MODEL_BASE_URL:-https://github.com/RazzorCodes/crosswords/releases/latest/download}
 
 volumes:
   models-data:

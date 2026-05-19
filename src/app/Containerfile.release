@@ -9,10 +9,14 @@ RUN rm -f public/models
 RUN npm run build
 
 # Runtime stage
-FROM nginx:alpine
-COPY --from=builder /app/dist /usr/share/nginx/html
+FROM node:20-slim
+RUN npm install -g serve
+WORKDIR /app
+COPY --from=builder /app/dist /app
 COPY src/app/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+ENV APP_ROOT=/app
+RUN chmod -R a+rX /app \
+    && chmod +x /entrypoint.sh
 
 EXPOSE 80
 ENTRYPOINT ["/entrypoint.sh"]

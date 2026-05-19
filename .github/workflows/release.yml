@@ -76,41 +76,12 @@ jobs:
           docker push $IMAGE:${{ env.RELEASE_TAG }}
           docker push $IMAGE:latest
 
-      - uses: azure/setup-helm@v4
-
-      - name: Package and push chart
-        run: |
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          # Remove 'v' from version for helm if it's there, but here VERSION is just X.Y.Z
-          helm package deploy/helm --version ${{ env.VERSION }} --app-version ${{ env.VERSION }}
-          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
-          helm push crosswords-${{ env.VERSION }}.tgz oci://ghcr.io/$OWNER/charts
-
-      - name: Install dependencies
-        run: |
-          if command -v apk >/dev/null 2>&1; then
-            sudo apk add --no-cache zip
-          elif command -v apt-get >/dev/null 2>&1; then
-            sudo apt-get update && sudo apt-get install -y zip
-          else
-            echo "Unknown package manager"
-            exit 1
-          fi
-
-      - name: Package Assets
-        run: |
-          chmod +x deploy/scripts/package-assets.sh
-          ./deploy/scripts/package-assets.sh ${{ env.VERSION }} /models
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.GIT_TAG }}
           name: Release ${{ env.VERSION }}
           files: |
-            dist/*.zip
             /models/*.onnx
-            /models/*.pkl
-            crosswords-${{ env.VERSION }}.tgz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
