@@ -1,99 +1,74 @@
 import type { RecognitionResult, StrokeInput, RecognitionCandidate } from './types';
-import { recognizeNativeHandwriting, warmNativeHandwritingRecognizer } from './nativeHandwriting';
-import { recognizeFallback } from './fallback';
-import { recognizePixelZoning } from './pixelZoning';
-import { recognizeHeuristic } from './heuristic';
-
-let isNativeApiAvailable = true;
+import { knnRecognizer } from './knn';
 
 export async function warmRecognizers() {
+  // No warming needed for the new system currently, 
+  // but we keep the export for compatibility.
+}
+
+async function fetchBackendPredictions(strokes: StrokeInput) {
   try {
-    await warmNativeHandwritingRecognizer();
+    const response = await fetch('http://localhost:8000/predict', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ strokes })
+    });
+    if (!response.ok) throw new Error('Backend prediction failed');
+    return await response.json();
   } catch (e) {
-    isNativeApiAvailable = false;
+    console.error('Backend prediction error:', e);
+    return null;
   }
 }
 
 export async function recognizeHandwriting(strokes: StrokeInput): Promise<RecognitionResult> {
   const sourceTrail: string[] = [];
   
-  // Run active engines in parallel
-  const tasks: Promise<any>[] = [
-    Promise.resolve(recognizePixelZoning(strokes)),
-    Promise.resolve(recognizeHeuristic(strokes)),
-    Promise.resolve(recognizeFallback(strokes))
-  ];
+  // 1. Get k-NN predictions (instant, browser)
+  const knnCandidates = knnRecognizer.predict(strokes);
+  const knnProbs: Record<string, number> = {};
+  for (let i = 65; i <= 90; i++) knnProbs[String.fromCharCode(i)] = 0;
+  knnCandidates.forEach(c => { knnProbs[c.char] = c.score; });
 
-  if (isNativeApiAvailable) {
-    tasks.push(recognizeNativeHandwriting(strokes).catch(err => {
-      console.warn('Native handwriting API failed, disabling:', err);
-      isNativeApiAvailable = false;
-      return { status: 'failed', candidates: [] };
-    }));
+  // 2. Get Backend predictions (SVM + CNN)
+  const backendResult = await fetchBackendPredictions(strokes);
+  const svmProbs: Record<string, number> = {};
+  const cnnProbs: Record<string, number> = {};
+  for (let i = 65; i <= 90; i++) {
+    const char = String.fromCharCode(i);
+    svmProbs[char] = backendResult?.svm?.probs?.[char] ?? (1.0 / 26);
+    cnnProbs[char] = backendResult?.cnn?.probs?.[char] ?? (1.0 / 26);
   }
 
-  const results = await Promise.all(tasks);
-  
-  // Results indices: 0: PixelZoning, 1: Heuristic, 2: Fallback, 3: Native (if active)
-  const pixelResult = results[0];
-  const heuristicResult = results[1];
-  const fallbackResult = results[2];
-  const nativeResult = results.length > 3 ? results[3] : { status: 'failed', candidates: [] };
+  // 3. Weighted voting
+  // final_probs = 0.5 × knn_probs + 0.3 × svm_probs + 0.2 × cnn_probs
+  const finalProbs: Record<string, number> = {};
+  const candidates: RecognitionCandidate[] = [];
+
+  for (let i = 65; i <= 90; i++) {
+    const char = String.fromCharCode(i);
+    const score = (0.5 * knnProbs[char]) + (0.3 * svmProbs[char]) + (0.2 * cnnProbs[char]);
+    finalProbs[char] = score;
+    candidates.push({ char, score, source: 'ensemble' });
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  const topCandidates = candidates.slice(0, 3);
+
+  sourceTrail.push('knn', 'svm', 'cnn', 'weighted-vote');
 
   const engineResults = [
-    { name: 'PixelZoning', char: pixelResult.char, score: pixelResult.score },
-    { name: 'Heuristic', char: heuristicResult.char, score: heuristicResult.score },
+    { name: 'k-NN', char: knnCandidates[0]?.char ?? '?', score: knnCandidates[0]?.score ?? 0 },
+    { name: 'SVM', char: backendResult?.svm?.label ?? '?', score: backendResult?.svm?.probs?.[backendResult?.svm?.label] ?? 0 },
+    { name: 'CNN', char: backendResult?.cnn?.label ?? '?', score: backendResult?.cnn?.probs?.[backendResult?.cnn?.label] ?? 0 },
   ];
 
-  if (isNativeApiAvailable && nativeResult.candidates[0]) {
-    engineResults.unshift({ 
-      name: 'Native', 
-      char: nativeResult.candidates[0].char, 
-      score: nativeResult.candidates[0].score 
-    });
-    sourceTrail.push('native');
-  }
-
-  // Aggregate candidates from all engines (Quorum)
-  const candidateMap: Record<string, RecognitionCandidate> = {};
-
-  const addCandidate = (c: RecognitionCandidate) => {
-    if (!c.char) return;
-    const char = c.char.toUpperCase();
-    if (!candidateMap[char]) {
-      candidateMap[char] = { char, score: c.score, source: c.source };
-    } else {
-      // Quorum weight: boost score if multiple engines agree
-      candidateMap[char].score = Math.min(1.0, candidateMap[char].score + (c.score * 0.5));
-      candidateMap[char].source = `${candidateMap[char].source}+${c.source}`;
-    }
-  };
-
-  // Add native candidates
-  nativeResult.candidates.forEach(addCandidate);
-  
-  // Add heuristic/pixel/fallback
-  [pixelResult, heuristicResult].forEach(r => {
-    if (r.char) addCandidate({ char: r.char, score: r.score, source: r.source });
-  });
-  fallbackResult.candidates.forEach(addCandidate);
-
-  let finalCandidates = Object.values(candidateMap);
-  finalCandidates.sort((a, b) => b.score - a.score);
-
-  // If no results, or very low confidence, add '?'
-  if (finalCandidates.length === 0 || finalCandidates[0].score < 0.2) {
-    finalCandidates.unshift({ char: '?', score: 1.0, source: 'system' });
-  }
-
-  finalCandidates = finalCandidates.slice(0, 3);
-  sourceTrail.push('quorum');
-
   return {
-    status: 'uncertain', // Always uncertain to force manual selection
-    candidates: finalCandidates,
-    chosenChar: null,
+    status: backendResult?.teacher?.action === 'accept' ? 'confirmed' : 'uncertain',
+    candidates: topCandidates,
+    chosenChar: backendResult?.teacher?.action === 'accept' ? backendResult.teacher.label : null,
     sourceTrail,
-    engineResults
+    engineResults,
+    teacher: backendResult?.teacher
   };
 }

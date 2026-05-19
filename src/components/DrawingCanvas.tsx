@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useGameStore } from '../store/useGameStore';
 import { recognizeHandwriting, warmRecognizers } from '../utils/recognizers/ocr';
+import { submitStrokeData } from '../utils/api';
 
 export function DrawingCanvas() {
   const { grid, updateCellInput, setSelectedCell, isGestureActive, showSuggestions, clearSuggestions } = useGameStore();
@@ -209,8 +210,16 @@ export function DrawingCanvas() {
       // Trigger Toast
       useGameStore.getState().addToast(bestChar, bestScore, result.engineResults || []);
 
-      // Always show suggestions, never auto-fill
-      showSuggestions({ x: cx, y: cy }, result.candidates, result.sourceTrail, strokes);
+      if (result.status === 'confirmed' && result.chosenChar) {
+        // Phase 3: Ground Truth Capture - Tier 3
+        // Stored into disk queue (submitStrokeData) but NOT k-NN according to plan?
+        // Wait, the plan says: "Tier 3 ... Goes to disk queue only — not to k-NN"
+        updateCellInput(cx, cy, result.chosenChar);
+        void submitStrokeData(result.chosenChar, strokes);
+      } else {
+        // Always show suggestions if not confirmed
+        showSuggestions({ x: cx, y: cy }, result.candidates, result.sourceTrail, strokes);
+      }
     } catch (err) {
       console.error('Handwriting OCR Error:', err);
     }

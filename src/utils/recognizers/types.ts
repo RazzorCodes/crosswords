@@ -1,6 +1,6 @@
 export type Point = { x: number; y: number; t: number };
 
-export type RecognizerStatus = 'strong' | 'uncertain' | 'failed';
+export type RecognizerStatus = 'strong' | 'confirmed' | 'uncertain' | 'failed';
 
 export interface RecognitionCandidate {
   char: string;
@@ -20,6 +20,11 @@ export interface RecognitionResult {
   chosenChar: string | null;
   sourceTrail: string[];
   engineResults?: { name: string; char: string; score: number }[];
+  teacher?: {
+    label: string;
+    confidence: number;
+    action: 'accept' | 'prompt' | 'discard' | 'none';
+  };
 }
 
 export type StrokeInput = Point[][];

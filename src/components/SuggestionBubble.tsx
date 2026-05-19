@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useGameStore } from '../store/useGameStore';
 import { submitStrokeData } from '../utils/api';
+import { knnRecognizer } from '../utils/recognizers/knn';
 
 const CELL_SIZE = 40;
 const GRID_GAP = 1;
@@ -55,6 +56,8 @@ export function SuggestionBubble() {
               className="h-8 w-8 rounded-full bg-slate-800 text-sm font-black text-white transition-all hover:bg-blue-600 hover:scale-110 active:scale-95 flex items-center justify-center"
               onClick={() => {
                 if (candidate.char !== '?') {
+                  // Phase 3: Ground Truth Capture - Tier 1 or 2
+                  knnRecognizer.addExample(strokes, candidate.char);
                   void submitStrokeData(candidate.char, strokes);
                 }
                 updateCellInput(cell.x, cell.y, candidate.char);
