@@ -1,11 +1,22 @@
 import { StrokeInput } from './recognizers/types';
 
-const defaultSrvUrl =
-  typeof window === 'undefined'
-    ? 'http://localhost:8000'
-    : `${window.location.protocol}//${window.location.hostname}:8000`;
+function resolveSrvUrl(): string {
+  if (import.meta.env.VITE_SRV_URL !== undefined) {
+    return import.meta.env.VITE_SRV_URL;
+  }
 
-const SRV_URL = import.meta.env.VITE_SRV_URL || defaultSrvUrl;
+  if (typeof window !== 'undefined') {
+    const runtimeSrvUrl = window.CROSSWORDS_CONFIG?.SRV_URL;
+    if (runtimeSrvUrl !== undefined) {
+      return runtimeSrvUrl;
+    }
+    return `${window.location.protocol}//${window.location.hostname}:8000`;
+  }
+
+  return import.meta.env.VITE_SRV_URL || 'http://localhost:8000';
+}
+
+const SRV_URL = resolveSrvUrl();
 
 export interface SubmitSampleRequest {
   label: string;
@@ -37,6 +48,11 @@ export interface TeacherStatus {
 }
 
 export async function submitSample(request: SubmitSampleRequest): Promise<SubmitSampleResponse | null> {
+  if (!SRV_URL) {
+    console.warn('Sample submission is disabled because no SRV_URL is configured.');
+    return null;
+  }
+
   try {
     const response = await fetch(`${SRV_URL}/samples`, {
       method: 'POST',
@@ -66,6 +82,11 @@ export async function submitSample(request: SubmitSampleRequest): Promise<Submit
 }
 
 export async function deleteSample(sampleId: string): Promise<boolean> {
+  if (!SRV_URL) {
+    console.warn('Sample deletion is disabled because no SRV_URL is configured.');
+    return false;
+  }
+
   try {
     const response = await fetch(`${SRV_URL}/samples/${sampleId}`, {
       method: 'DELETE',
@@ -78,6 +99,10 @@ export async function deleteSample(sampleId: string): Promise<boolean> {
 }
 
 export async function fetchLetterStats(): Promise<{ counts: Record<string, number>; total: number } | null> {
+  if (!SRV_URL) {
+    return null;
+  }
+
   try {
     const response = await fetch(`${SRV_URL}/stats`);
     if (!response.ok) return null;
@@ -89,6 +114,10 @@ export async function fetchLetterStats(): Promise<{ counts: Record<string, numbe
 }
 
 export async function fetchTeacherStatus(): Promise<TeacherStatus | null> {
+  if (!SRV_URL) {
+    return null;
+  }
+
   try {
     const response = await fetch(`${SRV_URL}/teacher/status`);
     if (!response.ok) return null;

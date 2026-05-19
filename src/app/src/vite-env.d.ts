@@ -8,3 +8,12 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+interface CrosswordsRuntimeConfig {
+  MODEL_BASE_URL?: string;
+  SRV_URL?: string;
+}
+
+interface Window {
+  CROSSWORDS_CONFIG?: CrosswordsRuntimeConfig;
+}
