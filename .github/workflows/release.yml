@@ -100,7 +100,7 @@ jobs:
       - name: Package Assets
         run: |
           chmod +x deploy/scripts/package-assets.sh
-          ./deploy/scripts/package-assets.sh ${{ env.VERSION }}
+          ./deploy/scripts/package-assets.sh ${{ env.VERSION }} /models
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -109,7 +109,8 @@ jobs:
           name: Release ${{ env.VERSION }}
           files: |
             dist/*.zip
-            models/*.onnx
+            /models/*.onnx
+            /models/*.pkl
             crosswords-${{ env.VERSION }}.tgz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -9,7 +9,7 @@ services:
     ports:
       - "5173:80"
     volumes:
-      - ./models:/app/models:ro,z
+      - models-data:/app/models:ro
     depends_on:
       - srv
 
@@ -35,7 +35,7 @@ services:
       dockerfile: src/ml/Containerfile
     volumes:
       - ./data:/data:z
-      - ./models:/models:z
+      - models-data:/models
     environment:
       - DATA_ROOT=/data
       - MODELS_DIR=/models
@@ -43,3 +43,11 @@ services:
       - TRAIN_MIN_INTERVAL_SECONDS=60
       - TRAIN_MIN_SAMPLES_DELTA=10
     command: ["python", "src/ml/train_loop.py"]
+
+volumes:
+  models-data:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=nfs.lan,nolock,soft,rw
+      device: ":/slow/data/ml-models/handwriting/"
