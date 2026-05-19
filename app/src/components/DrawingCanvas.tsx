@@ -1,10 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { useGameStore } from '../store/useGameStore';
+import { useHandwritingStore } from '../store/useHandwritingStore';
 import { cancelPendingSubmission, finalizeHandwritingSample } from '../utils/handwritingSession';
 import { recognizeHandwriting, warmRecognizers } from '../utils/recognizers/ocr';
 
 export function DrawingCanvas() {
   const { grid, updateCellInput, setSelectedCell, isGestureActive, showSuggestions, clearSuggestions } = useGameStore();
+  const { trainMode } = useHandwritingStore();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawingRef = useRef(false);
   const currentStrokeRef = useRef<{ x: number; y: number; t: number }[]>([]);
@@ -71,7 +73,9 @@ export function DrawingCanvas() {
       const bestChar = result.chosenChar || result.candidates[0]?.char || '?';
       const bestScore = result.candidates[0]?.score || 0;
 
-      useGameStore.getState().addToast(bestChar, bestScore, result.engineResults || []);
+      if (trainMode) {
+        useGameStore.getState().addToast(bestChar, bestScore, result.engineResults || []);
+      }
 
       if (result.status === 'confirmed' && result.chosenChar) {
         updateCellInput(cx, cy, result.chosenChar);
@@ -85,7 +89,9 @@ export function DrawingCanvas() {
         return;
       }
 
-      showSuggestions({ x: cx, y: cy }, result.candidates, result.sourceTrail, strokes);
+      if (trainMode) {
+        showSuggestions({ x: cx, y: cy }, result.candidates, result.sourceTrail, strokes);
+      }
     } catch (error) {
       console.error('Handwriting OCR error:', error);
     }

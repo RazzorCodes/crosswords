@@ -15,7 +15,7 @@ services:
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro,z
     env_file:
-      - ./litellm/.env
+      - ./litellm/.env-secret
     command: ["--config", "/app/config.yaml", "--port", "40000"]
     restart: unless-stopped
     profiles:
