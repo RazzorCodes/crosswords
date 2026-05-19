@@ -5,7 +5,7 @@ import { cancelPendingSubmission, finalizeHandwritingSample } from '../utils/han
 import { recognizeHandwriting, warmRecognizers } from '../utils/recognizers/ocr';
 
 export function DrawingCanvas() {
-  const { grid, updateCellInput, setSelectedCell, isGestureActive, addSuggestion } = useGameStore();
+  const { grid, updateCellInput, setSelectedCell, isGestureActive, addSuggestion, suggestions, removeSuggestion } = useGameStore();
   const { trainMode } = useHandwritingStore();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawingRef = useRef(false);
@@ -120,9 +120,11 @@ export function DrawingCanvas() {
 
     if (strokes.length === 1) {
       const gesture = checkLineGesture(strokes[0]);
-      if (gesture.isLine && cell.userInput !== '') {
+      const hasSuggestion = suggestions.some(s => s.cell.x === cellX && s.cell.y === cellY);
+      if (gesture.isLine && (cell.userInput !== '' || hasSuggestion)) {
         cancelPendingSubmission(`${cellX}:${cellY}`);
         updateCellInput(cellX, cellY, '');
+        if (hasSuggestion) removeSuggestion(cellX, cellY);
         clearCanvas();
         return;
       }
@@ -157,16 +159,19 @@ export function DrawingCanvas() {
     activeCellRef.current = cellInfo;
     setSelectedCell({ x: cellInfo.cellX, y: cellInfo.cellY });
 
+    const scaleX = canvasRef.current!.width / rect.width;
+    const scaleY = canvasRef.current!.height / rect.height;
+    const internalX = x * scaleX;
+    const internalY = y * scaleY;
+
     isDrawingRef.current = true;
-    currentStrokeRef.current = [{ x, y, t: Date.now() }];
+    currentStrokeRef.current = [{ x: internalX, y: internalY, t: Date.now() }];
     canvasRef.current?.setPointerCapture(e.pointerId);
 
     const ctx = canvasRef.current!.getContext('2d');
     if (ctx) {
-      const scaleX = canvasRef.current!.width / rect.width;
-      const scaleY = canvasRef.current!.height / rect.height;
       ctx.beginPath();
-      ctx.moveTo(x * scaleX, y * scaleY);
+      ctx.moveTo(internalX, internalY);
       ctx.strokeStyle = '#60a5fa';
       ctx.lineWidth = 4;
       ctx.lineCap = 'round';
@@ -207,15 +212,16 @@ export function DrawingCanvas() {
     }
 
     const rect = canvasRef.current!.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const scaleX = canvasRef.current!.width / rect.width;
+    const scaleY = canvasRef.current!.height / rect.height;
+    const x = (e.clientX - rect.left) * scaleX;
+    const y = (e.clientY - rect.top) * scaleY;
+    
     currentStrokeRef.current.push({ x, y, t: Date.now() });
 
     const ctx = canvasRef.current!.getContext('2d');
     if (ctx) {
-      const scaleX = canvasRef.current!.width / rect.width;
-      const scaleY = canvasRef.current!.height / rect.height;
-      ctx.lineTo(x * scaleX, y * scaleY);
+      ctx.lineTo(x, y);
       ctx.stroke();
     }
   };

@@ -8,6 +8,7 @@ import { CellComponent } from './Cell';
 import { DrawingCanvas } from './DrawingCanvas';
 import { HandwritingPanel } from './HandwritingPanel';
 import { SuggestionBubble } from './SuggestionBubble';
+import { SuggestionStrokes } from './SuggestionStrokes';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -199,6 +200,7 @@ export function GridComponent() {
             <CellComponent key={`${x}-${y}`} x={x} y={y} />
           )))}
         </div>
+        <SuggestionStrokes />
         <SuggestionBubble />
         <DrawingCanvas />
       </div>
