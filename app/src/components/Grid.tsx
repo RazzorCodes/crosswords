@@ -45,6 +45,28 @@ export function GridComponent() {
     });
   }, [grid]);
 
+  const findNextOpenCell = useCallback((
+    x: number,
+    y: number,
+    dx: number,
+    dy: number
+  ) => {
+    if (!grid) return null;
+
+    let nx = x + dx;
+    let ny = y + dy;
+
+    while (nx >= 0 && nx < grid.width && ny >= 0 && ny < grid.height) {
+      if (!grid.cells[ny][nx].isBlack) {
+        return { x: nx, y: ny };
+      }
+      nx += dx;
+      ny += dy;
+    }
+
+    return null;
+  }, [grid]);
+
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (!grid) return;
     const targetCell = suggestionState?.cell || selectedCell || hoveredCell;
@@ -52,9 +74,11 @@ export function GridComponent() {
     const { x, y } = targetCell;
 
     if (e.key === 'Backspace' || e.key === 'Delete') {
+      e.preventDefault();
       updateCellInput(x, y, '');
       if (suggestionState) clearSuggestions();
     } else if (e.key.length === 1 && /[a-zA-Z]/.test(e.key)) {
+      e.preventDefault();
       if (suggestionState) {
         void submitStrokeData(e.key.toUpperCase(), suggestionState.strokes);
         updateCellInput(x, y, e.key);
@@ -63,16 +87,18 @@ export function GridComponent() {
         updateCellInput(x, y, e.key);
       }
     } else if (selectedCell && e.key.startsWith('Arrow')) {
-      let nx = x, ny = y;
-      if (e.key === 'ArrowRight') nx++;
-      if (e.key === 'ArrowLeft') nx--;
-      if (e.key === 'ArrowDown') ny++;
-      if (e.key === 'ArrowUp') ny--;
-      if (nx >= 0 && nx < grid.width && ny >= 0 && ny < grid.height) {
-        setSelectedCell({ x: nx, y: ny });
+      e.preventDefault();
+      const nextCell =
+        e.key === 'ArrowRight' ? findNextOpenCell(x, y, 1, 0) :
+        e.key === 'ArrowLeft' ? findNextOpenCell(x, y, -1, 0) :
+        e.key === 'ArrowDown' ? findNextOpenCell(x, y, 0, 1) :
+        findNextOpenCell(x, y, 0, -1);
+
+      if (nextCell) {
+        setSelectedCell(nextCell);
       }
     }
-  }, [grid, selectedCell, hoveredCell, updateCellInput, setSelectedCell, suggestionState, clearSuggestions]);
+  }, [grid, selectedCell, hoveredCell, updateCellInput, setSelectedCell, suggestionState, clearSuggestions, findNextOpenCell]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);

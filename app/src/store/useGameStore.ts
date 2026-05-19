@@ -76,6 +76,10 @@ export const useGameStore = create<GameState>((set) => ({
   setIsGestureActive: (isGestureActive) => set({ isGestureActive }),
   updateCellInput: (x, y, input) => set((state) => {
     if (!state.grid) return state;
+    if (y < 0 || y >= state.grid.height || x < 0 || x >= state.grid.width) return state;
+
+    const currentCell = state.grid.cells[y][x];
+    if (!currentCell || currentCell.isBlack) return state;
     
     // Check if cell is locked (part of a fully correct word)
     const currentWords = getWordAt(state.grid, x, y);
@@ -84,13 +88,16 @@ export const useGameStore = create<GameState>((set) => ({
 
     const newCells = [...state.grid.cells];
     newCells[y] = [...newCells[y]];
-    newCells[y][x] = { ...newCells[y][x], userInput: input.toUpperCase() };
+    const normalizedInput = input.slice(0, 1).toUpperCase();
+    newCells[y][x] = { ...newCells[y][x], userInput: normalizedInput };
     
     const newGrid = { ...state.grid, cells: newCells };
     
     // Check for victory
     let newEndTime = state.endTime;
-    const allSolved = newGrid.placements.every(p => isWordPlacementCorrect(newGrid, p));
+    const allSolved =
+      newGrid.placements.length > 0 &&
+      newGrid.placements.every(p => isWordPlacementCorrect(newGrid, p));
     if (allSolved && !state.endTime) {
       newEndTime = Date.now();
     }

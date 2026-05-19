@@ -38,6 +38,8 @@ function App() {
 
       // Fetch stats to balance letters
       const stats = await fetchLetterStats();
+      if (cancelled) return;
+
       const priorityLetters: string[] = [];
       
       if (stats && stats.total > 0) {
@@ -60,9 +62,12 @@ function App() {
         if (priorityLetters.length > 0) {
           console.log('Balancing crossword. Priority letters:', priorityLetters.join(', '));
         }
+      } else {
+        setMostNeededLetter(null);
       }
 
       const newGrid = generateCrossword(words, 15, priorityLetters);
+      if (cancelled) return;
       setGrid(newGrid);
       setStartTime(Date.now());
       setEndTime(null);

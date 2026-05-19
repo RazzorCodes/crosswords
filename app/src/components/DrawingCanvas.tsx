@@ -186,7 +186,9 @@ export function DrawingCanvas() {
   const handlePointerUp = (e: React.PointerEvent) => {
     if (!e.isPrimary) return;
     finishStroke();
-    canvasRef.current?.releasePointerCapture(e.pointerId);
+    if (canvasRef.current?.hasPointerCapture(e.pointerId)) {
+      canvasRef.current.releasePointerCapture(e.pointerId);
+    }
   };
 
   const clearCanvas = () => {

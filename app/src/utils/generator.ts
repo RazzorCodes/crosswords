@@ -3,12 +3,27 @@ import { Cell, GridData, WordEntry, WordPlacement } from '../types';
 export function generateCrossword(words: WordEntry[], size: number = 15, priorityLetters: string[] = []): GridData {
   const grid: string[][] = Array(size).fill(null).map(() => Array(size).fill(''));
   const placements: WordPlacement[] = [];
+  const seenWords = new Set<string>();
+
+  const usableWords = words
+    .map((entry) => ({
+      ...entry,
+      word: entry.word.trim().toUpperCase(),
+      clue: entry.clue.trim(),
+    }))
+    .filter((entry) => {
+      if (!/^[A-Z]+$/.test(entry.word)) return false;
+      if (entry.word.length < 3 || entry.word.length > size) return false;
+      if (seenWords.has(entry.word)) return false;
+      seenWords.add(entry.word);
+      return true;
+    });
   
   // Create a priority set for fast lookup
   const prioritySet = new Set(priorityLetters.map(l => l.toUpperCase()));
   
   // Sort words by priority score, then by length
-  const sortedWords = [...words].map(w => {
+  const sortedWords = usableWords.map(w => {
     let priorityScore = 0;
     const uniqueChars = new Set(w.word.toUpperCase().split(''));
     uniqueChars.forEach(char => {
@@ -18,6 +33,19 @@ export function generateCrossword(words: WordEntry[], size: number = 15, priorit
     });
     return { ...w, score: priorityScore + w.word.length };
   }).sort((a, b) => b.score - a.score);
+
+  if (sortedWords.length === 0) {
+    const cells: Cell[][] = Array(size).fill(null).map((_, y) =>
+      Array(size).fill(null).map((_, x) => ({
+        x,
+        y,
+        char: '',
+        userInput: '',
+        isBlack: true
+      }))
+    );
+    return { cells, placements, width: size, height: size };
+  }
   
   // Helper to check if a word can be placed
   const canPlace = (word: string, x: number, y: number, direction: 'across' | 'down') => {
@@ -152,6 +180,8 @@ export function generateCrossword(words: WordEntry[], size: number = 15, priorit
       }
     }
   }
+
+  placements.sort((a, b) => a.number - b.number || a.direction.localeCompare(b.direction));
 
   return { cells, placements, width: size, height: size };
 }

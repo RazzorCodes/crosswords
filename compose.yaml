@@ -1,0 +1,40 @@
+services:
+  app:
+    build:
+      context: ./app
+    ports:
+      - "5173:80"
+    volumes:
+      - ./models:/usr/share/nginx/html/models:ro
+    environment:
+      - VITE_SRV_URL=http://localhost:8000
+    depends_on:
+      - srv
+
+  srv:
+    build:
+      context: ./srv
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./dataset:/data/dataset
+      - ./dataset.jsonl:/data/legacy-dataset.jsonl
+    environment:
+      - DATA_DIR=/data/dataset
+      - DATA_PATH=/data/legacy-dataset.jsonl
+
+  ai:
+    build:
+      context: ./ai
+    volumes:
+      - ./dataset:/data/dataset
+      - ./dataset.jsonl:/data/legacy-dataset.jsonl:ro
+      - ./models:/models
+    environment:
+      - DATA_DIR=/data/dataset
+      - DATA_PATH=/data/legacy-dataset.jsonl
+      - MODELS_DIR=/models
+      - TRAIN_POLL_SECONDS=10
+    command: ["python", "train_loop.py"]
+    profiles:
+      - train

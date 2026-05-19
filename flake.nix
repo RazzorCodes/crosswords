@@ -2,51 +2,32 @@
   description = "Crossword Puzzle Web App";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-24.05";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs { 
+          inherit system; 
+          config.allowUnfree = true;
+        };
       in
       {
-        packages.default = pkgs.buildNpmPackage {
-          pname = "crosswords";
-          version = "0.1.0";
-          src = ./.;
-          npmDepsHash = "sha256-bEXOb3XkUqTNMvFOBn8sHFNF9LQAnKiNRuS7KEg3Rtw=";
-          installPhase = ''
-            mkdir -p $out
-            cp -r dist/* $out/
-          '';
-        };
-
-        packages.node_modules = pkgs.buildNpmPackage {
-          pname = "crosswords-node-modules";
-          version = "0.1.0";
-          src = ./.;
-          npmDepsHash = "sha256-bEXOb3XkUqTNMvFOBn8sHFNF9LQAnKiNRuS7KEg3Rtw=";
-          dontBuild = true;
-          installPhase = ''
-            mkdir -p $out
-            cp -r node_modules $out/
-          '';
-        };
-
         devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [
+          packages = with pkgs; [
             nodejs_20
+            (python3.withPackages (ps: with ps; [
+              numpy
+              scikit-learn
+              pillow
+            ]))
           ];
           shellHook = ''
-            if [ ! -L node_modules ] || [ ! -d node_modules ]; then
-              echo "Symlinking node_modules from Nix store..."
-              ln -sfn $(nix build .#node_modules --no-link --print-out-paths)/node_modules node_modules
-            fi
-            export PATH="$PWD/node_modules/.bin:$PATH"
-            echo "Crossword development environment loaded."
-            echo "node_modules are managed by Nix. Vite cache is redirected to .vite_cache."
+            export PYTHONPATH=$PYTHONPATH:$(pwd)/ai
+            echo "Crosswords dev shell loaded (Node.js + lightweight Python)."
+            echo "CNN/ONNX training remains container-based; the shell intentionally avoids torch-bin."
           '';
         };
       });

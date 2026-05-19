@@ -7,6 +7,7 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+__pycache__
 node_modules
 dist
 dist-ssr
@@ -35,3 +36,6 @@ result
 tesseract-worker.js
 tesseract-core*.wasm
 tesseract-core*.js
+
+# Runtime data
+dataset/
