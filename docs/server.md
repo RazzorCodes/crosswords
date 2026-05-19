@@ -4,21 +4,30 @@ The backend is a Python-based server that manages the lifecycle of handwriting s
 
 ## Responsibilities
 
-- **Sample Management**: Provides RESTful endpoints (`POST /samples`, `DELETE /samples/:id`) to store and manage handwriting data.
-- **External Teacher Integration**: When enabled via the `external-teacher` profile, it uses LiteLLM to automatically promote samples to "High Quality" status.
-- **Data Integrity**: Uses `sample_store.py` to ensure consistent data reads/writes and maintains audit logs for all sample events.
-- **Model Serving Support**: Provides endpoints or data access for the AI pipeline to retrieve training data and export models.
+- **Sample Management**: Endpoints for creating (`POST /samples`), deleting (`DELETE /samples/:id`), and monitoring statistics (`GET /stats`).
+- **External Teacher Integration**: Automatically promotes "Regular" samples to "High Quality" using multimodal LLMs.
+- **Data Integrity**: Uses `sample_store.py` for structured JSONL storage, audit logging, and soft deletions (tombstones).
+- **Inference Support**: Serves as the source of truth for labels and data used by the ML training pipeline.
 
-## External Teacher Logic
+## External Teacher (LiteLLM)
 
-The server enables LiteLLM-based promotion only if:
-1. `EXTERNAL_TEACHER_ENABLED=1` is set.
-2. LiteLLM is correctly configured and healthy.
-3. The model `fast` is available and supports multimodal input.
+The server runs a background worker that polls the data store for "Pending" samples. If enough samples are available and the high-quality share is below the target (20%), it triggers a promotion cycle.
 
-It promotes samples by batching them into images and asking the LLM for labels, comparing them against the original user labels.
+### Configuration
+- `EXTERNAL_TEACHER_ENABLED=1`: Main toggle.
+- `TEACHER_OPENAPI_ENDPOINT` (or `LITELLM_BASE_URL`): The LiteLLM proxy address.
+- `TEACHER_MODEL_NAME` (or `LITELLM_MODEL`): The multimodal model to use (e.g., `gpt-4o`, `fast`).
+- `LITELLM_API_KEY`: Authentication for the LiteLLM proxy.
+- `TEACHER_POLL_SECONDS`: How often to check for new work (default: 15s).
 
-## Implementation
+### Logic Flow
+1. **Batching**: 20 samples are rendered into a single 5x4 grid image.
+2. **Classification**: The image is sent to LiteLLM with a prompt asking for 20 comma-separated labels.
+3. **Promotion**: If the LLM identifies a letter clearly, the sample is moved to the `high_quality` category with a `litellm` provider tag.
+4. **Rejection**: If the LLM returns `?`, the sample is marked as rejected for LLM promotion.
 
-- **File**: `srv/server.py`
-- **Infrastructure**: Runs in a Docker container (see `srv/Containerfile`).
+## Implementation Details
+
+- **Server**: `srv/server.py` using `http.server.ThreadingHTTPServer`.
+- **Worker**: A daemon thread running `external_teacher_worker()`.
+- **Infrastructure**: Containerized via `srv/Containerfile`, typically exposed on port 8000.

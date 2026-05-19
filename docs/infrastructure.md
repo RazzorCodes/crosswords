@@ -6,22 +6,29 @@ The project uses modern infrastructure tools to ensure reproducibility and ease 
 
 The system is orchestrated using Docker Compose (`compose.yaml`).
 
-- **Default Services**: Runs the `app`, `srv`, and potentially the `ai` training loop.
-- **External Teacher Profile**: `compose.external-teacher.yaml` enables the LiteLLM-based promotion path by injecting necessary environment variables and configuration.
+- **Profiles**:
+  - `dev`: Runs the `app` (Vite dev server), `srv` (API), and `ml` (Training loop) services.
+  - `release`: Runs a optimized `app-release` service.
+- **Services**:
+  - `app`: Frontend with HMR. Depends on `srv`.
+  - `srv`: Sample management API with LiteLLM background worker.
+  - `ml`: Continuous training pipeline.
+- **Volumes**:
+  - `./data`: Host-mounted directory for JSONL sample storage.
+  - `models-data`: A named volume (can be backed by NFS or local disk) for sharing `.onnx` and `.pth` models between the training pipeline and the frontend.
 
 ## Nix & Flake
 
-The `flake.nix` file provides a reproducible development environment. It defines:
-- Required dependencies (Python, Node.js, etc.).
-- Shell hooks for setting up the environment.
-- Any necessary system-level libraries for ML (like those needed for PyTorch or TensorFlow if used by the CNN).
+The `flake.nix` file provides a reproducible development environment.
+- **Dependencies**: Includes Python 3.x (with PyTorch/scikit-learn), Node.js, and essential build tools.
+- **Environment**: Automatically sets up `PYTHONPATH` and other variables needed for local development.
 
 ## Data Persistence
 
-Host directories are mounted into containers to ensure data and model persistence:
+Host directories are mounted into containers to ensure data survives restarts:
 - `./data` -> `/data`
-- `./models` -> `/models`
+- Shared volume -> `/models` (Training writes here, Frontend reads from here).
 
-## Migration
+## Environment Configuration
 
-The `migrate_legacy_dataset.py` script is provided to transition from the legacy `dataset.jsonl` format to the new structured directory layout.
+A `.env` file is used to manage sensitive and environment-specific variables like `LITELLM_API_KEY`, `TEACHER_MODEL_NAME`, and `EXTERNAL_TEACHER_ENABLED`.

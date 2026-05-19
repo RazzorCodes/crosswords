@@ -5,32 +5,31 @@ A handwriting-enabled crossword game with a continuous learning pipeline for let
 ## 🚀 Quick Start
 
 1.  **Environment Setup**: Ensure you have [Docker](https://www.docker.com/) and [Nix](https://nixos.org/) installed.
-2.  **Start the App**:
+2.  **Start Dev Environment**:
     ```bash
-    docker compose up -d
+    docker compose --profile dev up -d
     ```
 3.  **Train Mode**: To start as a human teacher:
     ```bash
-    VITE_TRAIN_MODE=true docker compose up -d
+    VITE_TRAIN_MODE=true docker compose --profile dev up -d
     ```
 
 ## 📂 Repository Structure
 
--   `src/app/`: Vite/React frontend application.
--   `src/srv/`: Python API server for sample management.
--   `src/ml/`: Model training and evaluation scripts (CNN, SVM, k-NN).
+-   `src/app/`: Vite/React frontend with **ONNX Runtime Web** for local inference.
+-   `src/srv/`: Python API server for sample management and **LiteLLM** integration.
+-   `src/ml/`: Model training scripts for **CNN** (PyTorch) and **SVM** (Scikit-Learn).
 -   `deploy/`: Deployment assets (Helm chart, GHA workflows, release scripts).
--   `data/`: Structured storage for handwriting samples.
--   `models/`: Source of truth for exported ONNX models.
+-   `data/`: Categorical **JSONL** storage for handwriting samples.
+-   `models/`: Shared volume for exported ONNX models.
 -   `docs/`: Detailed documentation for each component.
 
 ## 🚢 Release & Deployment
 
 The project is configured for automated releases via GitHub Actions.
-- **Release Mode**: A single-container app that streams ONNX models from GitHub Release assets.
-- **Dev Mode**: Full stack (App, Srv, ML) for local development and training.
+- **Release Mode**: Use `--profile release`. It runs a optimized build that fetches models from release assets.
+- **Dev Mode**: Use `--profile dev`. Runs the full stack (App, Srv, ML) for local training.
 - **Helm Chart**: Located in `deploy/helm`, supports both modes.
-- **Dynamic Models**: Models are fetched at runtime based on `MODEL_RELEASE_TAG` or `MODEL_BASE_URL`.
 
 ## 📖 Documentation
 
@@ -45,10 +44,10 @@ For detailed information on each logical component, see the [docs/](./docs) fold
 
 ## 🛠️ Features
 
--   **Handwriting Input**: Capture and recognize letters from stroke data.
--   **Continuous Learning**: Models retrain as new high-quality data becomes available.
--   **Ensemble Recognition**: Combined predictions from CNN, SVM, and k-NN.
+-   **Local Ensemble Inference**: Real-time recognition using k-NN, SVM, and CNN via ONNX.
+-   **Continuous Retraining**: `train_loop.py` automatically updates models as data grows.
 -   **External Teacher**: Optional LiteLLM integration for automated sample promotion.
+-   **Reproducible Env**: Full development setup via Nix Flake.
 
 ---
 *Created with the help of Gemini CLI.*
