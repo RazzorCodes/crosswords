@@ -1,56 +1,47 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { useGameStore } from '../store/useGameStore';
-import { CellComponent } from './Cell';
-import { DrawingCanvas } from './DrawingCanvas';
-import { SuggestionBubble } from './SuggestionBubble';
-import { submitStrokeData } from '../utils/api';
-import { getWordAt, isWordPlacementCorrect } from '../utils/validation';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { useGameStore } from '../store/useGameStore';
+import { cancelPendingSubmission, finalizeHandwritingSample } from '../utils/handwritingSession';
+import { getWordAt, isWordPlacementCorrect } from '../utils/validation';
+import { CellComponent } from './Cell';
+import { DrawingCanvas } from './DrawingCanvas';
+import { HandwritingPanel } from './HandwritingPanel';
+import { SuggestionBubble } from './SuggestionBubble';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
 export function GridComponent() {
-  const { 
-    grid, 
-    selectedCell, 
-    setSelectedCell, 
-    updateCellInput, 
-    hoveredCell, 
-    setIsGestureActive, 
-    suggestionState, 
-    clearSuggestions, 
+  const {
+    grid,
+    selectedCell,
+    setSelectedCell,
+    updateCellInput,
+    hoveredCell,
+    setIsGestureActive,
+    suggestionState,
+    clearSuggestions,
     showLeftPanel,
-    setActiveHint
+    setActiveHint,
   } = useGameStore();
-  
+
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const lastTouchRef = useRef<{ x: number, y: number } | null>(null);
+  const lastTouchRef = useRef<{ x: number; y: number } | null>(null);
   const lastDistanceRef = useRef<number | null>(null);
 
   const centerOnCell = useCallback((x: number, y: number) => {
     if (!grid) return;
-    // Each cell is 40px + 1px gap = 41px
     const cx = (grid.width * 41) / 2;
     const cy = (grid.height * 41) / 2;
-    const cellX = x * 41 + 20.5; // Center of the cell
-    const cellY = y * 41 + 20.5;
-    
-    setOffset({
-      x: cx - cellX,
-      y: cy - cellY
-    });
+    const cellX = (x * 41) + 20.5;
+    const cellY = (y * 41) + 20.5;
+    setOffset({ x: cx - cellX, y: cy - cellY });
   }, [grid]);
 
-  const findNextOpenCell = useCallback((
-    x: number,
-    y: number,
-    dx: number,
-    dy: number
-  ) => {
+  const findNextOpenCell = useCallback((x: number, y: number, dx: number, dy: number) => {
     if (!grid) return null;
 
     let nx = x + dx;
@@ -72,33 +63,51 @@ export function GridComponent() {
     const targetCell = suggestionState?.cell || selectedCell || hoveredCell;
     if (!targetCell) return;
     const { x, y } = targetCell;
+    const key = `${x}:${y}`;
 
     if (e.key === 'Backspace' || e.key === 'Delete') {
       e.preventDefault();
+      cancelPendingSubmission(key);
       updateCellInput(x, y, '');
       if (suggestionState) clearSuggestions();
-    } else if (e.key.length === 1 && /[a-zA-Z]/.test(e.key)) {
+      return;
+    }
+
+    if (e.key.length === 1 && /[a-zA-Z]/.test(e.key)) {
       e.preventDefault();
+      const value = e.key.toUpperCase();
+
       if (suggestionState) {
-        void submitStrokeData(e.key.toUpperCase(), suggestionState.strokes);
-        updateCellInput(x, y, e.key);
+        updateCellInput(x, y, value);
+        finalizeHandwritingSample({
+          x,
+          y,
+          label: value,
+          strokes: suggestionState.strokes,
+          source: 'keyboard-correction',
+        });
         clearSuggestions();
-      } else {
-        updateCellInput(x, y, e.key);
+        return;
       }
-    } else if (selectedCell && e.key.startsWith('Arrow')) {
+
+      cancelPendingSubmission(key);
+      updateCellInput(x, y, value);
+      return;
+    }
+
+    if (selectedCell && e.key.startsWith('Arrow')) {
       e.preventDefault();
       const nextCell =
-        e.key === 'ArrowRight' ? findNextOpenCell(x, y, 1, 0) :
-        e.key === 'ArrowLeft' ? findNextOpenCell(x, y, -1, 0) :
-        e.key === 'ArrowDown' ? findNextOpenCell(x, y, 0, 1) :
-        findNextOpenCell(x, y, 0, -1);
+        e.key === 'ArrowRight' ? findNextOpenCell(x, y, 1, 0)
+          : e.key === 'ArrowLeft' ? findNextOpenCell(x, y, -1, 0)
+            : e.key === 'ArrowDown' ? findNextOpenCell(x, y, 0, 1)
+              : findNextOpenCell(x, y, 0, -1);
 
       if (nextCell) {
         setSelectedCell(nextCell);
       }
     }
-  }, [grid, selectedCell, hoveredCell, updateCellInput, setSelectedCell, suggestionState, clearSuggestions, findNextOpenCell]);
+  }, [clearSuggestions, findNextOpenCell, grid, hoveredCell, selectedCell, setSelectedCell, suggestionState, updateCellInput]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
@@ -107,28 +116,25 @@ export function GridComponent() {
 
   const handleTouchMove = (e: TouchEvent) => {
     if (e.touches.length === 2) {
-      // TWO FINGER: ZOOM & PAN
       setIsGestureActive(true);
       const touch1 = e.touches[0];
       const touch2 = e.touches[1];
-      
       const centerX = (touch1.clientX + touch2.clientX) / 2;
       const centerY = (touch1.clientY + touch2.clientY) / 2;
-      
+
       if (lastTouchRef.current) {
         const dx = centerX - lastTouchRef.current.x;
         const dy = centerY - lastTouchRef.current.y;
-        setOffset(o => ({ x: o.x + dx, y: o.y + dy }));
+        setOffset((current) => ({ x: current.x + dx, y: current.y + dy }));
       }
       lastTouchRef.current = { x: centerX, y: centerY };
 
-      const dist = Math.hypot(touch1.clientX - touch2.clientX, touch1.clientY - touch2.clientY);
+      const distance = Math.hypot(touch1.clientX - touch2.clientX, touch1.clientY - touch2.clientY);
       if (lastDistanceRef.current !== null) {
-        const delta = dist / lastDistanceRef.current;
-        setScale(s => Math.min(Math.max(s * delta, 0.2), 5));
+        const delta = distance / lastDistanceRef.current;
+        setScale((current) => Math.min(Math.max(current * delta, 0.2), 5));
       }
-      lastDistanceRef.current = dist;
-      
+      lastDistanceRef.current = distance;
       e.preventDefault();
     }
   };
@@ -151,79 +157,79 @@ export function GridComponent() {
     if (e.touches.length < 2) {
       lastTouchRef.current = null;
       lastDistanceRef.current = null;
-      // Use a timeout to keep gesture active briefly, preventing the transition from 2 fingers 
-      // back to 1 finger from triggering a "draw" stroke.
       setTimeout(() => setIsGestureActive(false), 150);
     }
   };
 
   if (!grid) return null;
 
-  const selectedClues = selectedCell 
-    ? getWordAt(grid, selectedCell.x, selectedCell.y).filter(p => !isWordPlacementCorrect(grid, p)) 
+  const selectedClues = selectedCell
+    ? getWordAt(grid, selectedCell.x, selectedCell.y).filter((placement) => !isWordPlacementCorrect(grid, placement))
     : [];
 
   return (
-    <div 
-      className="flex-1 w-full h-full overflow-hidden relative flex flex-col items-center justify-center bg-slate-950 touch-none"
+    <div
+      className="relative flex h-full w-full flex-1 touch-none flex-col items-center justify-center overflow-hidden bg-slate-950"
       onWheel={(e) => {
         if (e.ctrlKey) {
-          setScale(s => Math.min(Math.max(s - e.deltaY * 0.01, 0.2), 5));
+          setScale((current) => Math.min(Math.max(current - (e.deltaY * 0.01), 0.2), 5));
         } else {
-          setOffset(o => ({ x: o.x - e.deltaX, y: o.y - e.deltaY }));
+          setOffset((current) => ({ x: current.x - e.deltaX, y: current.y - e.deltaY }));
         }
       }}
       onTouchStart={(e) => handleTouchStart(e.nativeEvent)}
       onTouchMove={(e) => handleTouchMove(e.nativeEvent)}
       onTouchEnd={(e) => handleTouchEnd(e.nativeEvent)}
     >
-      <div 
+      <div
         className="relative transition-transform duration-75 ease-out"
-        style={{ 
+        style={{
           transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
-          transformOrigin: 'center'
+          transformOrigin: 'center',
         }}
       >
-        <div 
-          className="grid gap-px bg-slate-700 border border-slate-700 p-px shadow-2xl"
-          style={{ 
+        <div
+          className="grid gap-px border border-slate-700 bg-slate-700 p-px shadow-2xl"
+          style={{
             gridTemplateColumns: `repeat(${grid.width}, minmax(0, 1fr))`,
-            width: 'fit-content'
+            width: 'fit-content',
           }}
         >
-          {grid.cells.map((row, y) => 
-            row.map((_, x) => (
-              <CellComponent key={`${x}-${y}`} x={x} y={y} />
-            ))
-          )}
+          {grid.cells.map((row, y) => row.map((_, x) => (
+            <CellComponent key={`${x}-${y}`} x={x} y={y} />
+          )))}
         </div>
         <SuggestionBubble />
         <DrawingCanvas />
       </div>
-      
-      {/* Selected clues floating overlay */}
+
+      <HandwritingPanel />
+
       {selectedClues.length > 0 && (
-        <div className="absolute bottom-12 left-1/2 -translate-x-1/2 w-[90%] md:w-auto md:min-w-[400px] max-w-[600px] z-40 animate-in fade-in slide-in-from-bottom-4 duration-300">
-          <div className="bg-slate-900/90 backdrop-blur-xl border border-slate-700/50 shadow-2xl rounded-2xl p-4 flex flex-col gap-2">
-            {selectedClues.map((p, idx) => (
-              <div key={`${p.direction}-${p.number}`} className={cn(
-                "flex items-start gap-3 relative group",
-                idx > 0 && "pt-2 border-t border-slate-800"
-              )}>
-                <div className={cn(
-                  "px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest shrink-0 mt-0.5",
-                  p.direction === 'across' ? "bg-blue-500/20 text-blue-400" : "bg-emerald-500/20 text-emerald-400"
-                )}>
-                  {p.number} {p.direction}
+        <div className="absolute bottom-12 left-1/2 z-40 w-[90%] max-w-[600px] -translate-x-1/2 animate-in slide-in-from-bottom-4 duration-300 md:min-w-[400px] md:w-auto">
+          <div className="flex flex-col gap-2 rounded-2xl border border-slate-700/50 bg-slate-900/90 p-4 shadow-2xl backdrop-blur-xl">
+            {selectedClues.map((placement, index) => (
+              <div
+                key={`${placement.direction}-${placement.number}`}
+                className={cn(
+                  'group relative flex items-start gap-3',
+                  index > 0 && 'border-t border-slate-800 pt-2',
+                )}
+              >
+                <div
+                  className={cn(
+                    'mt-0.5 shrink-0 rounded px-2 py-0.5 text-[10px] font-black uppercase tracking-widest',
+                    placement.direction === 'across' ? 'bg-blue-500/20 text-blue-400' : 'bg-emerald-500/20 text-emerald-400',
+                  )}
+                >
+                  {placement.number} {placement.direction}
                 </div>
-                <div className="text-sm font-medium text-slate-100 leading-tight pr-8">
-                  {p.clue}
+                <div className="pr-8 text-sm font-medium leading-tight text-slate-100">
+                  {placement.clue}
                 </div>
-                
-                {/* Hint Button */}
                 <button
-                  className="absolute right-0 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-black text-slate-400 hover:text-white hover:bg-slate-700 transition-all active:scale-95 touch-none select-none"
-                  onPointerDown={() => setActiveHint(p)}
+                  className="absolute right-0 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-slate-700 bg-slate-800 text-xs font-black text-slate-400 transition-all hover:bg-slate-700 hover:text-white active:scale-95 touch-none select-none"
+                  onPointerDown={() => setActiveHint(placement)}
                   onPointerUp={() => setActiveHint(null)}
                   onPointerLeave={() => setActiveHint(null)}
                   onContextMenu={(e) => e.preventDefault()}
@@ -236,53 +242,67 @@ export function GridComponent() {
         </div>
       )}
 
-      {/* Clues overlay panel (Desktop/Tablet) */}
       {showLeftPanel && (
-        <div className="absolute top-0 bottom-0 left-0 w-64 bg-slate-900/90 backdrop-blur-md border-r border-slate-800 p-4 overflow-y-auto z-30 pointer-events-auto hidden md:block animate-in slide-in-from-left duration-300">
+        <div className="pointer-events-auto absolute bottom-0 left-0 top-0 z-30 hidden w-64 overflow-y-auto border-r border-slate-800 bg-slate-900/90 p-4 backdrop-blur-md animate-in slide-in-from-left duration-300 md:block">
           <div className="flex flex-col gap-6 text-left">
             <div>
-              <h3 className="text-sm font-black mb-3 text-blue-400 uppercase tracking-tighter border-b border-blue-400/20 pb-1">Across</h3>
+              <h3 className="mb-3 border-b border-blue-400/20 pb-1 text-sm font-black uppercase tracking-tighter text-blue-400">Across</h3>
               <ul className="space-y-3">
-                {grid.placements.filter(p => p.direction === 'across').map(p => {
-                  const isSolved = isWordPlacementCorrect(grid, p);
+                {grid.placements.filter((placement) => placement.direction === 'across').map((placement) => {
+                  const isSolved = isWordPlacementCorrect(grid, placement);
                   return (
-                    <li 
-                      key={`across-${p.number}`} 
-                      className={cn(
-                        "text-xs leading-relaxed group cursor-pointer transition-all",
-                        isSolved && "opacity-40 grayscale"
-                      )} 
-                      onClick={() => { setSelectedCell({x: p.x, y: p.y}); centerOnCell(p.x, p.y); }}
+                    <li
+                      key={`across-${placement.number}`}
+                      className={cn('group cursor-pointer text-xs leading-relaxed transition-all', isSolved && 'opacity-40 grayscale')}
+                      onClick={() => { setSelectedCell({ x: placement.x, y: placement.y }); centerOnCell(placement.x, placement.y); }}
                     >
-                      <span className={cn(
-                        "font-bold mr-2 px-1 rounded transition-colors",
-                        isSolved ? "line-through" : (selectedCell?.x === p.x && selectedCell?.y === p.y ? "bg-blue-600 text-white" : "text-blue-400 group-hover:bg-slate-800")
-                      )}>{p.number}</span>
-                      <span className={cn("text-slate-300 group-hover:text-white", isSolved && "line-through")}>{p.clue}</span>
+                      <span
+                        className={cn(
+                          'mr-2 rounded px-1 font-bold transition-colors',
+                          isSolved
+                            ? 'line-through'
+                            : selectedCell?.x === placement.x && selectedCell?.y === placement.y
+                              ? 'bg-blue-600 text-white'
+                              : 'text-blue-400 group-hover:bg-slate-800',
+                        )}
+                      >
+                        {placement.number}
+                      </span>
+                      <span className={cn('text-slate-300 group-hover:text-white', isSolved && 'line-through')}>
+                        {placement.clue}
+                      </span>
                     </li>
                   );
                 })}
               </ul>
             </div>
+
             <div>
-              <h3 className="text-sm font-black mb-3 text-emerald-400 uppercase tracking-tighter border-b border-emerald-400/20 pb-1">Down</h3>
+              <h3 className="mb-3 border-b border-emerald-400/20 pb-1 text-sm font-black uppercase tracking-tighter text-emerald-400">Down</h3>
               <ul className="space-y-3">
-                {grid.placements.filter((p: any) => p.direction === 'down').map((p: any) => {
-                  const isSolved = isWordPlacementCorrect(grid, p);
+                {grid.placements.filter((placement) => placement.direction === 'down').map((placement) => {
+                  const isSolved = isWordPlacementCorrect(grid, placement);
                   return (
-                    <li 
-                      key={`down-${p.number}`} 
-                      className={cn(
-                        "text-xs leading-relaxed group cursor-pointer transition-all",
-                        isSolved && "opacity-40 grayscale"
-                      )} 
-                      onClick={() => { setSelectedCell({x: p.x, y: p.y}); centerOnCell(p.x, p.y); }}
+                    <li
+                      key={`down-${placement.number}`}
+                      className={cn('group cursor-pointer text-xs leading-relaxed transition-all', isSolved && 'opacity-40 grayscale')}
+                      onClick={() => { setSelectedCell({ x: placement.x, y: placement.y }); centerOnCell(placement.x, placement.y); }}
                     >
-                      <span className={cn(
-                        "font-bold mr-2 px-1 rounded transition-colors",
-                        isSolved ? "line-through" : (selectedCell?.x === p.x && selectedCell?.y === p.y ? "bg-emerald-600 text-white" : "text-emerald-400 group-hover:bg-slate-800")
-                      )}>{p.number}</span>
-                      <span className={cn("text-slate-300 group-hover:text-white", isSolved && "line-through")}>{p.clue}</span>
+                      <span
+                        className={cn(
+                          'mr-2 rounded px-1 font-bold transition-colors',
+                          isSolved
+                            ? 'line-through'
+                            : selectedCell?.x === placement.x && selectedCell?.y === placement.y
+                              ? 'bg-emerald-600 text-white'
+                              : 'text-emerald-400 group-hover:bg-slate-800',
+                        )}
+                      >
+                        {placement.number}
+                      </span>
+                      <span className={cn('text-slate-300 group-hover:text-white', isSolved && 'line-through')}>
+                        {placement.clue}
+                      </span>
                     </li>
                   );
                 })}
@@ -292,35 +312,36 @@ export function GridComponent() {
         </div>
       )}
 
-      {/* Mobile clues panel */}
-      <div className="absolute bottom-0 left-0 right-0 bg-slate-900/90 backdrop-blur-md border-t border-slate-800 p-4 max-h-48 overflow-y-auto z-30 pointer-events-auto md:hidden">
+      <div className="pointer-events-auto absolute bottom-0 left-0 right-0 z-30 max-h-48 overflow-y-auto border-t border-slate-800 bg-slate-900/90 p-4 backdrop-blur-md md:hidden">
         <div className="grid grid-cols-2 gap-4 text-left">
           <div>
-            <h3 className="text-[10px] font-black mb-2 text-blue-400 uppercase">Across</h3>
-            {grid.placements.filter(p => p.direction === 'across').map(p => {
-              const isSolved = isWordPlacementCorrect(grid, p);
+            <h3 className="mb-2 text-[10px] font-black uppercase text-blue-400">Across</h3>
+            {grid.placements.filter((placement) => placement.direction === 'across').map((placement) => {
+              const isSolved = isWordPlacementCorrect(grid, placement);
               return (
-                <div 
-                  key={`m-across-${p.number}`} 
-                  className={cn("text-[10px] mb-1 transition-opacity", isSolved ? "opacity-40 line-through text-slate-500" : "text-slate-300")} 
-                  onClick={() => { setSelectedCell({x: p.x, y: p.y}); centerOnCell(p.x, p.y); }}
+                <div
+                  key={`m-across-${placement.number}`}
+                  className={cn('mb-1 text-[10px] transition-opacity', isSolved ? 'text-slate-500 line-through opacity-40' : 'text-slate-300')}
+                  onClick={() => { setSelectedCell({ x: placement.x, y: placement.y }); centerOnCell(placement.x, placement.y); }}
                 >
-                  <span className="font-bold mr-1">{p.number}.</span> {p.clue}
+                  <span className="mr-1 font-bold">{placement.number}.</span>
+                  {placement.clue}
                 </div>
               );
             })}
           </div>
           <div>
-            <h3 className="text-[10px] font-black mb-2 text-emerald-400 uppercase">Down</h3>
-            {grid.placements.filter((p: any) => p.direction === 'down').map((p: any) => {
-              const isSolved = isWordPlacementCorrect(grid, p);
+            <h3 className="mb-2 text-[10px] font-black uppercase text-emerald-400">Down</h3>
+            {grid.placements.filter((placement) => placement.direction === 'down').map((placement) => {
+              const isSolved = isWordPlacementCorrect(grid, placement);
               return (
-                <div 
-                  key={`m-down-${p.number}`} 
-                  className={cn("text-[10px] mb-1 transition-opacity", isSolved ? "opacity-40 line-through text-slate-500" : "text-slate-300")} 
-                  onClick={() => { setSelectedCell({x: p.x, y: p.y}); centerOnCell(p.x, p.y); }}
+                <div
+                  key={`m-down-${placement.number}`}
+                  className={cn('mb-1 text-[10px] transition-opacity', isSolved ? 'text-slate-500 line-through opacity-40' : 'text-slate-300')}
+                  onClick={() => { setSelectedCell({ x: placement.x, y: placement.y }); centerOnCell(placement.x, placement.y); }}
                 >
-                  <span className="font-bold mr-1">{p.number}.</span> {p.clue}
+                  <span className="mr-1 font-bold">{placement.number}.</span>
+                  {placement.clue}
                 </div>
               );
             })}

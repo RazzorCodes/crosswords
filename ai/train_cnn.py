@@ -1,51 +1,22 @@
-import json
-import torch
-import torch.optim as optim
-import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
-import numpy as np
 import os
 from pathlib import Path
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, Dataset
+
 from cnn_builder import render_stroke_entry
 from cnn_model import get_cnn_model
+from training_data import load_training_split
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_DATASET_PATH = PROJECT_ROOT / "dataset.jsonl"
-DEFAULT_DATASET_DIR = PROJECT_ROOT / "dataset"
 DEFAULT_MODELS_DIR = PROJECT_ROOT / "models"
 
 
-def iter_dataset_files():
-    dataset_path = Path(os.getenv("DATA_PATH", str(DEFAULT_DATASET_PATH))).expanduser()
-    dataset_dir = Path(os.getenv("DATA_DIR", str(DEFAULT_DATASET_DIR))).expanduser()
-    files = []
-
-    if dataset_path.exists() and dataset_path.is_file():
-        files.append(dataset_path)
-
-    if dataset_dir.exists():
-        files.extend(sorted(
-            path for path in dataset_dir.glob("*.jsonl")
-            if path.is_file()
-        ))
-
-    return files
-
 class StrokeDataset(Dataset):
-    def __init__(self, data_paths, size=64):
-        self.entries = []
-        for data_path in data_paths:
-            if os.path.exists(data_path):
-                with open(data_path, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        if not line.strip():
-                            continue
-                        try:
-                            entry = json.loads(line)
-                            if 'label' in entry and 'strokes' in entry:
-                                self.entries.append(entry)
-                        except Exception:
-                            pass
+    def __init__(self, entries, size: int = 64):
+        self.entries = list(entries)
         self.size = size
 
     def __len__(self):
@@ -55,16 +26,18 @@ class StrokeDataset(Dataset):
         entry = self.entries[idx]
         img = render_stroke_entry(entry, size=self.size)
         img_tensor = torch.from_numpy(img).float().unsqueeze(0) / 255.0
-        label = ord(entry['label'].upper()) - 65
+        label = ord(entry["label"].upper()) - 65
         return img_tensor, label
 
-def train_cnn():
-    models_dir = os.getenv("MODELS_DIR", str(DEFAULT_MODELS_DIR))
-    os.makedirs(models_dir, exist_ok=True)
 
-    dataset = StrokeDataset(iter_dataset_files())
+def train_cnn() -> None:
+    models_dir = Path(os.getenv("MODELS_DIR", str(DEFAULT_MODELS_DIR))).expanduser()
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    split = load_training_split()
+    dataset = StrokeDataset(split["train_samples"])
     if len(dataset) < 30:
-        print("Not enough data for CNN training")
+        print("Not enough training data for CNN training.")
         return
 
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
@@ -74,7 +47,7 @@ def train_cnn():
 
     model.train()
     for epoch in range(10):
-        total_loss = 0
+        total_loss = 0.0
         for imgs, labels in dataloader:
             optimizer.zero_grad()
             outputs = model(imgs)
@@ -82,29 +55,31 @@ def train_cnn():
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
-        print(f"Epoch {epoch+1}, Loss: {total_loss/len(dataloader)}")
+        print(f"Epoch {epoch + 1}, Loss: {total_loss / len(dataloader):.4f}")
 
-    # Save PTH
-    pth_path = os.path.join(models_dir, "cnn_model.pth")
+    pth_path = models_dir / "cnn_model.pth"
     torch.save(model.state_dict(), pth_path)
     os.chmod(pth_path, 0o644)
 
-    # Save ONNX
     model.eval()
     dummy_input = torch.randn(1, 1, 64, 64)
-    onnx_path = os.path.join(models_dir, "cnn.onnx")
+    onnx_path = models_dir / "cnn.onnx"
     torch.onnx.export(
         model,
         dummy_input,
         onnx_path,
-        input_names=['input'],
-        output_names=['output'],
-        dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}},
+        input_names=["input"],
+        output_names=["output"],
+        dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
         opset_version=17,
         dynamo=False,
     )
     os.chmod(onnx_path, 0o644)
-    print(f"CNN model saved to ONNX at {onnx_path}")
+    print(
+        "CNN retrained and exported to ONNX "
+        f"with {len(split['train_samples'])} train samples and {len(split['high_quality_eval'])} HQ-eval samples."
+    )
+
 
 if __name__ == "__main__":
     train_cnn()

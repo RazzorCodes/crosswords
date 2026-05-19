@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { GridData, WordPlacement } from '../types';
-import { RecognitionCandidate, StrokeInput } from '../utils/recognizers/types';
+import { EngineResult, RecognitionCandidate, StrokeInput } from '../utils/recognizers/types';
 import { getWordAt, isWordPlacementCorrect } from '../utils/validation';
 
 interface SuggestionState {
@@ -14,7 +14,7 @@ interface ToastMessage {
   id: string;
   char: string;
   confidence: number;
-  engines: { name: string; char: string; score: number }[];
+  engines: EngineResult[];
 }
 
 interface GameState {
@@ -42,7 +42,7 @@ interface GameState {
   updateCellInput: (x: number, y: number, input: string) => void;
   showSuggestions: (cell: { x: number; y: number }, candidates: RecognitionCandidate[], sourceTrail: string[], strokes: StrokeInput) => void;
   clearSuggestions: () => void;
-  addToast: (char: string, confidence: number, engines: { name: string; char: string; score: number }[]) => void;
+  addToast: (char: string, confidence: number, engines: EngineResult[]) => void;
   removeToast: (id: string) => void;
   setMostNeededLetter: (letter: string | null) => void;
   setShowLeftPanel: (show: boolean) => void;

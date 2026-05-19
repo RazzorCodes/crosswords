@@ -1,9 +1,13 @@
 # Build stage
 FROM node:20-slim AS builder
 WORKDIR /app
-COPY package*.json ./
+ARG VITE_SRV_URL=http://localhost:8000
+ARG VITE_TRAIN_MODE=false
+ENV VITE_SRV_URL=${VITE_SRV_URL}
+ENV VITE_TRAIN_MODE=${VITE_TRAIN_MODE}
+COPY app/package*.json ./
 RUN npm install
-COPY . .
+COPY app/ .
 RUN mkdir -p /models
 RUN npm run build
 

@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useGameStore } from './store/useGameStore';
+import { useHandwritingStore } from './store/useHandwritingStore';
 import { generateCrossword } from './utils/generator';
 import { loadRomanianDictionaryEntries } from './utils/dictionary';
 import { GridComponent } from './components/Grid';
 import { SettingsComponent } from './components/Settings';
-import { fetchLetterStats } from './utils/api';
+import { ToastContainer } from './components/Toast';
+import { fetchLetterStats, fetchTeacherStatus } from './utils/api';
+import { cancelAllPendingSubmissions } from './utils/handwritingSession';
 import enWords from './data/en.json';
 import roWords from './data/ro.json';
 
@@ -21,6 +24,7 @@ function App() {
     endTime,
     setEndTime
   } = useGameStore();
+  const { trainMode, setTeacherStatus } = useHandwritingStore();
 
   const [isVictoryVisible, setIsVictoryVisible] = useState(false);
 
@@ -68,6 +72,7 @@ function App() {
 
       const newGrid = generateCrossword(words, 15, priorityLetters);
       if (cancelled) return;
+      cancelAllPendingSubmissions();
       setGrid(newGrid);
       setStartTime(Date.now());
       setEndTime(null);
@@ -80,6 +85,27 @@ function App() {
       cancelled = true;
     };
   }, [language, setGrid, setMostNeededLetter, gameId, setStartTime, setEndTime]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadTeacher = async () => {
+      const status = await fetchTeacherStatus();
+      if (!cancelled) {
+        setTeacherStatus(status);
+      }
+    };
+
+    void loadTeacher();
+    const interval = window.setInterval(() => {
+      void loadTeacher();
+    }, 15000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [setTeacherStatus]);
 
   // Background stat polling
   useEffect(() => {
@@ -150,6 +176,7 @@ function App() {
       <main className="flex-1 relative overflow-hidden">
         <GridComponent />
       </main>
+      <ToastContainer />
 
       {/* Victory Overlay */}
       {endTime && isVictoryVisible && (
@@ -176,7 +203,9 @@ function App() {
       )}
 
       <footer className="absolute bottom-4 right-4 text-slate-500 text-xs italic pointer-events-none z-50">
-        Use keyboard, mouse, or pen to solve. Pinch to zoom, drag to pan.
+        {trainMode
+          ? 'Train mode stores every handwriting final as high-quality and keeps the queue visible.'
+          : 'Use keyboard, mouse, or pen to solve. Pinch to zoom, drag to pan.'}
       </footer>
     </div>
   );

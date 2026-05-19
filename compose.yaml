@@ -1,42 +1,42 @@
 services:
   app:
     build:
-      context: ./app
+      context: .
+      dockerfile: app/Containerfile
+      args:
+        VITE_SRV_URL: http://localhost:8000
+        VITE_TRAIN_MODE: ${VITE_TRAIN_MODE:-false}
     ports:
       - "5173:80"
     volumes:
       - ./models:/app/models:ro,z
-    environment:
-      - VITE_SRV_URL=http://localhost:8000
     depends_on:
       - srv
 
   srv:
     build:
-      context: ./srv
+      context: .
+      dockerfile: srv/Containerfile
     ports:
       - "8000:8000"
     volumes:
-      - ./dataset:/data/dataset:z
-      - ./dataset.jsonl:/data/legacy-dataset.jsonl:z
+      - ./data:/data:z
     environment:
-      - DATA_DIR=/data/dataset
-      - DATA_PATH=/data/legacy-dataset.jsonl
+      - DATA_ROOT=/data
 
   ai:
     build:
-      context: ./ai
+      context: .
+      dockerfile: ai/Containerfile
     volumes:
-      - ./dataset:/data/dataset:z
-      - ./dataset.jsonl:/data/legacy-dataset.jsonl:ro,z
+      - ./data:/data:z
       - ./models:/models:z
     environment:
-      - DATA_DIR=/data/dataset
-      - DATA_PATH=/data/legacy-dataset.jsonl
+      - DATA_ROOT=/data
       - MODELS_DIR=/models
       - TRAIN_POLL_SECONDS=10
       - TRAIN_MIN_INTERVAL_SECONDS=60
       - TRAIN_MIN_SAMPLES_DELTA=10
-    command: ["python", "train_loop.py"]
+    command: ["python", "ai/train_loop.py"]
     profiles:
       - train

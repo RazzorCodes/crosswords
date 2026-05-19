@@ -7,31 +7,94 @@ const defaultSrvUrl =
 
 const SRV_URL = import.meta.env.VITE_SRV_URL || defaultSrvUrl;
 
-export async function submitStrokeData(label: string, strokes: StrokeInput) {
+export interface SubmitSampleRequest {
+  label: string;
+  strokes: StrokeInput;
+  storedAs: 'regular' | 'high_quality';
+  source: string;
+  mode: 'train' | 'play';
+  metadata?: Record<string, unknown>;
+}
+
+export interface SubmitSampleResponse {
+  id: string;
+  stored_as: 'regular' | 'high_quality';
+  queued_for_llm: boolean;
+}
+
+export interface TeacherStatus {
+  enabled: boolean;
+  configured: boolean;
+  health_ok: boolean;
+  model_supports_multimodal: boolean;
+  active: boolean;
+  reason: string;
+  checked_at: string | null;
+  hq_share: number;
+  target_share: number;
+  pending_queue_size: number;
+  model: string;
+}
+
+export async function submitSample(request: SubmitSampleRequest): Promise<SubmitSampleResponse | null> {
   try {
-    const response = await fetch(SRV_URL, {
+    const response = await fetch(`${SRV_URL}/samples`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ label, strokes }),
+      body: JSON.stringify({
+        label: request.label,
+        strokes: request.strokes,
+        stored_as: request.storedAs,
+        source: request.source,
+        mode: request.mode,
+        metadata: request.metadata ?? {},
+      }),
     });
-    
+
     if (!response.ok) {
-      console.error('Failed to submit stroke data:', response.statusText);
+      console.error('Failed to submit sample:', response.statusText);
+      return null;
     }
+
+    return await response.json();
   } catch (err) {
-    console.error('Error submitting stroke data:', err);
+    console.error('Error submitting sample:', err);
+    return null;
   }
 }
 
-export async function fetchLetterStats(): Promise<{counts: Record<string, number>, total: number} | null> {
+export async function deleteSample(sampleId: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${SRV_URL}/samples/${sampleId}`, {
+      method: 'DELETE',
+    });
+    return response.ok;
+  } catch (err) {
+    console.error('Error deleting sample:', err);
+    return false;
+  }
+}
+
+export async function fetchLetterStats(): Promise<{ counts: Record<string, number>; total: number } | null> {
   try {
     const response = await fetch(`${SRV_URL}/stats`);
     if (!response.ok) return null;
     return await response.json();
   } catch (err) {
     console.warn('Could not fetch letter stats from local server:', err);
+    return null;
+  }
+}
+
+export async function fetchTeacherStatus(): Promise<TeacherStatus | null> {
+  try {
+    const response = await fetch(`${SRV_URL}/teacher/status`);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch (err) {
+    console.warn('Could not fetch teacher status:', err);
     return null;
   }
 }

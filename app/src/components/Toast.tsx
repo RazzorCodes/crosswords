@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useGameStore } from '../store/useGameStore';
+import type { EngineResult } from '../utils/recognizers/types';
 
 export function ToastContainer() {
   const { toasts, removeToast } = useGameStore();
@@ -36,15 +37,25 @@ function ToastItem({ toast, onRemove }: { toast: any; onRemove: (id: string) => 
       </div>
 
       <div className="space-y-1.5 border-t border-slate-800 pt-2">
-        {toast.engines.map((eng: any) => (
-          <div key={eng.name} className="flex items-center justify-between text-[10px]">
-            <span className="text-slate-500 font-medium">{eng.name}</span>
-            <div className="flex items-center gap-2">
-              <span className="text-slate-300 font-bold">{eng.char || '?'}</span>
-              <span className="text-slate-600">({Math.round(eng.score * 100)}%)</span>
+        {toast.engines.map((eng: EngineResult) => {
+          const hasPrediction = eng.char !== null && eng.score !== null;
+          const score = eng.score ?? 0;
+          return (
+            <div key={eng.name} className="flex items-center justify-between text-[10px]">
+              <span className="text-slate-500 font-medium">{eng.name}</span>
+              <div className="flex items-center gap-2">
+                {hasPrediction ? (
+                  <>
+                    <span className="text-slate-300 font-bold">{eng.char}</span>
+                    <span className="text-slate-600">({Math.round(score * 100)}%)</span>
+                  </>
+                ) : (
+                  <span className="text-slate-600">{eng.detail || eng.status}</span>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

@@ -1,9 +1,9 @@
 FROM python:3.11-slim
-WORKDIR /ai
+WORKDIR /app
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch
 RUN pip install --no-cache-dir numpy scikit-learn pillow onnx onnxscript skl2onnx onnxconverter-common
-COPY . .
-ENV DATA_PATH=/data/legacy-dataset.jsonl
-ENV DATA_DIR=/data/dataset
+COPY ai /app/ai
+COPY sample_store.py /app/sample_store.py
+ENV DATA_ROOT=/data
 ENV MODELS_DIR=/models
-CMD ["python", "train_loop.py"]
+CMD ["python", "ai/train_loop.py"]

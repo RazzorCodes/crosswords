@@ -1,7 +1,9 @@
 import { useGameStore } from '../store/useGameStore';
+import { useHandwritingStore } from '../store/useHandwritingStore';
 
 export function SettingsComponent() {
   const { language, setLanguage, showGlow, setShowGlow, suggestionState, showLeftPanel, setShowLeftPanel } = useGameStore();
+  const { trainMode, teacherStatus } = useHandwritingStore();
 
   return (
     <div className="flex gap-4 items-center">
@@ -49,6 +51,22 @@ export function SettingsComponent() {
           {suggestionState ? 'CHOICES' : 'AUTO'}
         </span>
       </div>
+
+      <div className="hidden md:flex items-center gap-2">
+        <span className="text-[10px] text-slate-500 font-bold uppercase">Mode</span>
+        <span className={`px-2 py-0.5 text-xs rounded border ${trainMode ? 'bg-amber-600/20 text-amber-300 border-amber-600/40' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
+          {trainMode ? 'TRAIN' : 'PLAY'}
+        </span>
+      </div>
+
+      {!trainMode && teacherStatus?.enabled && (
+        <div className="hidden md:flex items-center gap-2">
+          <span className="text-[10px] text-slate-500 font-bold uppercase">Teacher</span>
+          <span className={`px-2 py-0.5 text-xs rounded border ${teacherStatus.active ? 'bg-emerald-600/20 text-emerald-300 border-emerald-600/40' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
+            {teacherStatus.active ? 'ACTIVE' : 'OFF'}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

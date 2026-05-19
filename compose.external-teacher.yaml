@@ -1,0 +1,22 @@
+services:
+  srv:
+    environment:
+      - EXTERNAL_TEACHER_ENABLED=1
+      - LITELLM_BASE_URL=http://litellm:40000
+      - LITELLM_API_KEY=
+      - LITELLM_MODEL=fast
+    depends_on:
+      - litellm
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    ports:
+      - "40000:40000"
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro,z
+    env_file:
+      - ./litellm/.env
+    command: ["--config", "/app/config.yaml", "--port", "40000"]
+    restart: unless-stopped
+    profiles:
+      - external-teacher

@@ -1,17 +1,16 @@
 import { useEffect, useRef } from 'react';
 import { useGameStore } from '../store/useGameStore';
+import { cancelPendingSubmission, finalizeHandwritingSample } from '../utils/handwritingSession';
 import { recognizeHandwriting, warmRecognizers } from '../utils/recognizers/ocr';
-import { submitStrokeData } from '../utils/api';
 
 export function DrawingCanvas() {
   const { grid, updateCellInput, setSelectedCell, isGestureActive, showSuggestions, clearSuggestions } = useGameStore();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawingRef = useRef(false);
   const currentStrokeRef = useRef<{ x: number; y: number; t: number }[]>([]);
-
   const allStrokesRef = useRef<{ x: number; y: number; t: number }[][]>([]);
   const ocrTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const activeCellRef = useRef<{ cellX: number, cellY: number, cellWidth: number, cellHeight: number } | null>(null);
+  const activeCellRef = useRef<{ cellX: number; cellY: number; cellWidth: number; cellHeight: number } | null>(null);
 
   useEffect(() => {
     void warmRecognizers();
@@ -32,12 +31,72 @@ export function DrawingCanvas() {
     return { cellX, cellY, cellWidth, cellHeight };
   };
 
+  const clearCanvas = () => {
+    const ctx = canvasRef.current?.getContext('2d');
+    if (ctx && canvasRef.current) {
+      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    }
+    currentStrokeRef.current = [];
+    isDrawingRef.current = false;
+  };
+
+  const checkLineGesture = (stroke: { x: number; y: number; t: number }[]) => {
+    if (stroke.length < 5) return { isLine: false };
+    const start = stroke[0];
+    const end = stroke[stroke.length - 1];
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const distance = Math.sqrt((dx * dx) + (dy * dy));
+    if (distance < 20) return { isLine: false };
+
+    let deviation = 0;
+    for (const point of stroke) {
+      const distanceToLine = Math.abs(
+        ((end.y - start.y) * point.x) -
+        ((end.x - start.x) * point.y) +
+        (end.x * start.y) -
+        (end.y * start.x),
+      ) / distance;
+      deviation += distanceToLine;
+    }
+
+    return { isLine: (deviation / stroke.length) < 5 };
+  };
+
+  const processOCR = async (cx: number, cy: number, strokes: { x: number; y: number; t: number }[][]) => {
+    if (strokes.length === 0) return;
+
+    try {
+      const result = await recognizeHandwriting(strokes);
+      const bestChar = result.chosenChar || result.candidates[0]?.char || '?';
+      const bestScore = result.candidates[0]?.score || 0;
+
+      useGameStore.getState().addToast(bestChar, bestScore, result.engineResults || []);
+
+      if (result.status === 'confirmed' && result.chosenChar) {
+        updateCellInput(cx, cy, result.chosenChar);
+        finalizeHandwritingSample({
+          x: cx,
+          y: cy,
+          label: result.chosenChar,
+          strokes,
+          source: 'auto-accept',
+        });
+        return;
+      }
+
+      showSuggestions({ x: cx, y: cy }, result.candidates, result.sourceTrail, strokes);
+    } catch (error) {
+      console.error('Handwriting OCR error:', error);
+    }
+  };
+
   const flushOCR = async () => {
     if (ocrTimeoutRef.current) {
       clearTimeout(ocrTimeoutRef.current);
       ocrTimeoutRef.current = null;
     }
-    
+
     if (!activeCellRef.current || allStrokesRef.current.length === 0) {
       clearCanvas();
       return;
@@ -47,7 +106,6 @@ export function DrawingCanvas() {
     const cell = grid?.cells[cellY]?.[cellX];
     const strokes = allStrokesRef.current;
 
-    // We copy values because we are about to clear the refs
     activeCellRef.current = null;
     allStrokesRef.current = [];
 
@@ -58,17 +116,14 @@ export function DrawingCanvas() {
 
     if (strokes.length === 1) {
       const gesture = checkLineGesture(strokes[0]);
-      if (gesture.isLine) {
-        if (cell.userInput !== '') {
-          // Strikethrough to delete
-          updateCellInput(cellX, cellY, '');
-          clearCanvas();
-          return;
-        }
+      if (gesture.isLine && cell.userInput !== '') {
+        cancelPendingSubmission(`${cellX}:${cellY}`);
+        updateCellInput(cellX, cellY, '');
+        clearCanvas();
+        return;
       }
     }
 
-    // Process OCR
     await processOCR(cellX, cellY, strokes);
     clearCanvas();
   };
@@ -88,11 +143,9 @@ export function DrawingCanvas() {
     if (activeCellRef.current) {
       if (activeCellRef.current.cellX !== cellInfo.cellX || activeCellRef.current.cellY !== cellInfo.cellY) {
         void flushOCR();
-      } else {
-        if (ocrTimeoutRef.current) {
-          clearTimeout(ocrTimeoutRef.current);
-          ocrTimeoutRef.current = null;
-        }
+      } else if (ocrTimeoutRef.current) {
+        clearTimeout(ocrTimeoutRef.current);
+        ocrTimeoutRef.current = null;
       }
     }
 
@@ -102,12 +155,11 @@ export function DrawingCanvas() {
     isDrawingRef.current = true;
     currentStrokeRef.current = [{ x, y, t: Date.now() }];
     canvasRef.current?.setPointerCapture(e.pointerId);
-    
+
     const ctx = canvasRef.current!.getContext('2d');
     if (ctx) {
       const scaleX = canvasRef.current!.width / rect.width;
       const scaleY = canvasRef.current!.height / rect.height;
-      
       ctx.beginPath();
       ctx.moveTo(x * scaleX, y * scaleY);
       ctx.strokeStyle = '#60a5fa';
@@ -163,26 +215,6 @@ export function DrawingCanvas() {
     }
   };
 
-  const checkLineGesture = (stroke: { x: number; y: number; t: number }[]) => {
-    if (stroke.length < 5) return { isLine: false, isVertical: false };
-    const start = stroke[0];
-    const end = stroke[stroke.length - 1];
-    const dx = end.x - start.x;
-    const dy = end.y - start.y;
-    const distance = Math.sqrt(dx * dx + dy * dy);
-    if (distance < 20) return { isLine: false, isVertical: false };
-    
-    let deviation = 0;
-    for (const p of stroke) {
-      const d = Math.abs((end.y - start.y) * p.x - (end.x - start.x) * p.y + end.x * start.y - end.y * start.x) / distance;
-      deviation += d;
-    }
-    const isLine = (deviation / stroke.length) < 5;
-    const angle = Math.abs(Math.atan2(dy, dx) * 180 / Math.PI);
-    const isVertical = angle > 60 && angle < 120;
-    return { isLine, isVertical };
-  };
-
   const handlePointerUp = (e: React.PointerEvent) => {
     if (!e.isPrimary) return;
     finishStroke();
@@ -191,46 +223,10 @@ export function DrawingCanvas() {
     }
   };
 
-  const clearCanvas = () => {
-    const ctx = canvasRef.current?.getContext('2d');
-    if (ctx && canvasRef.current) {
-      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-    }
-    currentStrokeRef.current = [];
-    isDrawingRef.current = false;
-  };
-
-  const processOCR = async (cx: number, cy: number, strokes: { x: number; y: number; t: number }[][]) => {
-    if (strokes.length === 0) return;
-
-    try {
-      const result = await recognizeHandwriting(strokes);
-      
-      const bestChar = result.chosenChar || (result.candidates.length > 0 ? result.candidates[0].char : '?');
-      const bestScore = result.candidates.length > 0 ? result.candidates[0].score : 0;
-      
-      // Trigger Toast
-      useGameStore.getState().addToast(bestChar, bestScore, result.engineResults || []);
-
-      if (result.status === 'confirmed' && result.chosenChar) {
-        // Phase 3: Ground Truth Capture - Tier 3
-        // Stored into disk queue (submitStrokeData) but NOT k-NN according to plan?
-        // Wait, the plan says: "Tier 3 ... Goes to disk queue only — not to k-NN"
-        updateCellInput(cx, cy, result.chosenChar);
-        void submitStrokeData(result.chosenChar, strokes);
-      } else {
-        // Always show suggestions if not confirmed
-        showSuggestions({ x: cx, y: cy }, result.candidates, result.sourceTrail, strokes);
-      }
-    } catch (err) {
-      console.error('Handwriting OCR Error:', err);
-    }
-  };
-
   return (
     <canvas
       ref={canvasRef}
-      className="absolute top-0 left-0 w-full h-full cursor-crosshair touch-none z-20"
+      className="absolute top-0 left-0 z-20 h-full w-full cursor-crosshair touch-none"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}

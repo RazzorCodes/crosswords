@@ -8,6 +8,14 @@ export interface RecognitionCandidate {
   source: string;
 }
 
+export interface EngineResult {
+  name: string;
+  char: string | null;
+  score: number | null;
+  status: 'ready' | 'unavailable' | 'error';
+  detail?: string;
+}
+
 export interface EngineRecognitionResult {
   source: string;
   status: RecognizerStatus;
@@ -19,7 +27,7 @@ export interface RecognitionResult {
   candidates: RecognitionCandidate[];
   chosenChar: string | null;
   sourceTrail: string[];
-  engineResults?: { name: string; char: string; score: number }[];
+  engineResults?: EngineResult[];
   teacher?: {
     label: string;
     confidence: number;
@@ -28,4 +36,3 @@ export interface RecognitionResult {
 }
 
 export type StrokeInput = Point[][];
-
