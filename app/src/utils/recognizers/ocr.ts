@@ -6,18 +6,42 @@ import type { RecognitionResult, StrokeInput, RecognitionCandidate } from './typ
 
 let svmSession: InferenceSession | null = null;
 let cnnSession: InferenceSession | null = null;
+let warmPromise: Promise<void> | null = null;
+let lastWarmFailureAt = 0;
+
+const RECOGNIZER_RETRY_DELAY_MS = 30_000;
 
 export async function warmRecognizers() {
-  try {
-    if (!svmSession) {
-      svmSession = await InferenceSession.create('/models/svm.onnx');
-    }
-    if (!cnnSession) {
-      cnnSession = await InferenceSession.create('/models/cnn.onnx');
-    }
-  } catch (e) {
-    console.warn('Failed to load ONNX models (this is expected if they haven\'t been exported yet):', e);
+  if (svmSession && cnnSession) {
+    return;
   }
+
+  if (warmPromise) {
+    return warmPromise;
+  }
+
+  if (lastWarmFailureAt > 0 && Date.now() - lastWarmFailureAt < RECOGNIZER_RETRY_DELAY_MS) {
+    return;
+  }
+
+  warmPromise = (async () => {
+    try {
+      if (!svmSession) {
+        svmSession = await InferenceSession.create('/models/svm.onnx');
+      }
+      if (!cnnSession) {
+        cnnSession = await InferenceSession.create('/models/cnn.onnx');
+      }
+      lastWarmFailureAt = 0;
+    } catch (e) {
+      lastWarmFailureAt = Date.now();
+      console.warn('Failed to load ONNX models (this is expected if they haven\'t been exported yet):', e);
+    } finally {
+      warmPromise = null;
+    }
+  })();
+
+  return warmPromise;
 }
 
 export async function recognizeHandwriting(strokes: StrokeInput): Promise<RecognitionResult> {

@@ -54,9 +54,17 @@ def run_trainers():
 
 def main():
     poll_seconds = max(1, int(os.getenv("TRAIN_POLL_SECONDS", "10")))
+    min_train_interval_seconds = max(1, int(os.getenv("TRAIN_MIN_INTERVAL_SECONDS", "60")))
+    min_samples_delta = max(1, int(os.getenv("TRAIN_MIN_SAMPLES_DELTA", "10")))
     last_signature = None
+    last_trained_sample_count = 0
+    last_train_at = 0.0
 
-    print(f"Starting training loop with {poll_seconds}s polling.")
+    print(
+        "Starting training loop with "
+        f"{poll_seconds}s polling, {min_train_interval_seconds}s min interval, "
+        f"and {min_samples_delta} new samples per retrain."
+    )
 
     while True:
         try:
@@ -64,8 +72,26 @@ def main():
             if signature != last_signature:
                 sample_count = total_samples()
                 if sample_count > 0:
-                    print(f"Dataset changed; retraining on {sample_count} samples.")
-                    run_trainers()
+                    now = time.time()
+                    enough_new_samples = (
+                        sample_count >= 10 and
+                        (
+                            last_trained_sample_count == 0 or
+                            sample_count - last_trained_sample_count >= min_samples_delta
+                        )
+                    )
+                    waited_long_enough = (now - last_train_at) >= min_train_interval_seconds
+
+                    if enough_new_samples and waited_long_enough:
+                        print(f"Dataset changed; retraining on {sample_count} samples.")
+                        run_trainers()
+                        last_trained_sample_count = sample_count
+                        last_train_at = now
+                    else:
+                        print(
+                            "Dataset changed; skipping retrain for now "
+                            f"(samples={sample_count}, last_trained={last_trained_sample_count})."
+                        )
                 else:
                     print("Dataset changed but is empty; skipping training.")
                 last_signature = signature

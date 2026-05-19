@@ -61,6 +61,7 @@ if __name__ == "__main__":
     pkl_path = os.path.join(models_dir, "letter_clf.pkl")
     with open(pkl_path, "wb") as f:
         pickle.dump(clf, f)
+    os.chmod(pkl_path, 0o644)
     
     # Save ONNX
     # Our extractFeatures returns 30 values
@@ -69,5 +70,6 @@ if __name__ == "__main__":
     onnx_path = os.path.join(models_dir, "svm.onnx")
     with open(onnx_path, "wb") as f:
         f.write(onx.SerializeToString())
+    os.chmod(onnx_path, 0o644)
 
     print(f"SVM retrained and exported to ONNX with {len(data)} samples.")

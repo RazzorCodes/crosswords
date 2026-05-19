@@ -87,15 +87,23 @@ def train_cnn():
     # Save PTH
     pth_path = os.path.join(models_dir, "cnn_model.pth")
     torch.save(model.state_dict(), pth_path)
+    os.chmod(pth_path, 0o644)
 
     # Save ONNX
     model.eval()
     dummy_input = torch.randn(1, 1, 64, 64)
     onnx_path = os.path.join(models_dir, "cnn.onnx")
-    torch.onnx.export(model, dummy_input, onnx_path, 
-                      input_names=['input'], output_names=['output'],
-                      dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}})
-
+    torch.onnx.export(
+        model,
+        dummy_input,
+        onnx_path,
+        input_names=['input'],
+        output_names=['output'],
+        dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}},
+        opset_version=17,
+        dynamo=False,
+    )
+    os.chmod(onnx_path, 0o644)
     print(f"CNN model saved to ONNX at {onnx_path}")
 
 if __name__ == "__main__":
