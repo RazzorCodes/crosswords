@@ -1,11 +1,23 @@
 import { Cell, GridData, WordEntry, WordPlacement } from '../types';
 
-export function generateCrossword(words: WordEntry[], size: number = 15): GridData {
+export function generateCrossword(words: WordEntry[], size: number = 15, priorityLetters: string[] = []): GridData {
   const grid: string[][] = Array(size).fill(null).map(() => Array(size).fill(''));
   const placements: WordPlacement[] = [];
   
-  // Sort words by length descending to place longer words first
-  const sortedWords = [...words].sort((a, b) => b.word.length - a.word.length);
+  // Create a priority set for fast lookup
+  const prioritySet = new Set(priorityLetters.map(l => l.toUpperCase()));
+  
+  // Sort words by priority score, then by length
+  const sortedWords = [...words].map(w => {
+    let priorityScore = 0;
+    const uniqueChars = new Set(w.word.toUpperCase().split(''));
+    uniqueChars.forEach(char => {
+      if (prioritySet.has(char)) {
+        priorityScore += 1000;
+      }
+    });
+    return { ...w, score: priorityScore + w.word.length };
+  }).sort((a, b) => b.score - a.score);
   
   // Helper to check if a word can be placed
   const canPlace = (word: string, x: number, y: number, direction: 'across' | 'down') => {
@@ -45,7 +57,7 @@ export function generateCrossword(words: WordEntry[], size: number = 15): GridDa
     return true;
   };
 
-  const placeWord = (word: WordEntry, x: number, y: number, direction: 'across' | 'down', number: number) => {
+  const placeWord = (word: WordEntry, x: number, y: number, direction: 'across' | 'down') => {
     for (let i = 0; i < word.word.length; i++) {
       if (direction === 'across') {
         grid[y][x + i] = word.word[i];
@@ -59,17 +71,16 @@ export function generateCrossword(words: WordEntry[], size: number = 15): GridDa
       x,
       y,
       direction,
-      number
+      number: 0 // placeholder
     });
   };
 
   // 1. Place the first word in the middle
   const first = sortedWords[0];
   if (first) {
-    placeWord(first, Math.floor((size - first.word.length) / 2), Math.floor(size / 2), 'across', 1);
+    placeWord(first, Math.floor((size - first.word.length) / 2), Math.floor(size / 2), 'across');
   }
   
-  let clueNumber = 2;
   const remaining = sortedWords.slice(1);
   
   // 2. Try to place other words by intersecting
@@ -84,7 +95,7 @@ export function generateCrossword(words: WordEntry[], size: number = 15): GridDa
             const y = direction === 'across' ? placement.y + i : placement.y - j;
             
             if (canPlace(item.word, x, y, direction)) {
-              placeWord(item, x, y, direction, clueNumber++);
+              placeWord(item, x, y, direction);
               placed = true;
               break;
             }
@@ -107,9 +118,39 @@ export function generateCrossword(words: WordEntry[], size: number = 15): GridDa
     }))
   );
 
-  // Add clue numbers to cells
-  for (const p of placements) {
-    cells[p.y][p.x].number = p.number;
+  // 4. Standard Crossword Numbering
+  let currentNumber = 1;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      if (!cells[y][x].isBlack) {
+        let needsNumber = false;
+        
+        // Start of across word
+        const startsAcross = (x === 0 || cells[y][x - 1].isBlack) && (x + 1 < size && !cells[y][x + 1].isBlack);
+        if (startsAcross) {
+          const placement = placements.find(p => p.x === x && p.y === y && p.direction === 'across');
+          if (placement) {
+            placement.number = currentNumber;
+            needsNumber = true;
+          }
+        }
+        
+        // Start of down word
+        const startsDown = (y === 0 || cells[y - 1][x].isBlack) && (y + 1 < size && !cells[y + 1][x].isBlack);
+        if (startsDown) {
+          const placement = placements.find(p => p.x === x && p.y === y && p.direction === 'down');
+          if (placement) {
+            placement.number = currentNumber;
+            needsNumber = true;
+          }
+        }
+        
+        if (needsNumber) {
+          cells[y][x].number = currentNumber;
+          currentNumber++;
+        }
+      }
+    }
   }
 
   return { cells, placements, width: size, height: size };

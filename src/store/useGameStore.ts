@@ -1,6 +1,7 @@
 import { create } from 'zustand';
-import { GridData } from '../types';
+import { GridData, WordPlacement } from '../types';
 import { RecognitionCandidate, StrokeInput } from '../utils/recognizers/types';
+import { getWordAt, isWordPlacementCorrect } from '../utils/validation';
 
 interface SuggestionState {
   cell: { x: number; y: number } | null;
@@ -25,6 +26,12 @@ interface GameState {
   isGestureActive: boolean;
   suggestionState: SuggestionState | null;
   toasts: ToastMessage[];
+  mostNeededLetter: string | null;
+  showLeftPanel: boolean;
+  activeHint: WordPlacement | null;
+  gameId: number;
+  startTime: number | null;
+  endTime: number | null;
   
   setLanguage: (lang: 'en' | 'ro') => void;
   setShowGlow: (show: boolean) => void;
@@ -37,6 +44,12 @@ interface GameState {
   clearSuggestions: () => void;
   addToast: (char: string, confidence: number, engines: { name: string; char: string; score: number }[]) => void;
   removeToast: (id: string) => void;
+  setMostNeededLetter: (letter: string | null) => void;
+  setShowLeftPanel: (show: boolean) => void;
+  setActiveHint: (hint: WordPlacement | null) => void;
+  setGameId: (id: number) => void;
+  setStartTime: (time: number | null) => void;
+  setEndTime: (time: number | null) => void;
 }
 
 export const useGameStore = create<GameState>((set) => ({
@@ -48,6 +61,12 @@ export const useGameStore = create<GameState>((set) => ({
   isGestureActive: false,
   suggestionState: null,
   toasts: [],
+  mostNeededLetter: null,
+  showLeftPanel: true,
+  activeHint: null,
+  gameId: 1,
+  startTime: null,
+  endTime: null,
 
   setLanguage: (language) => set({ language }),
   setShowGlow: (showGlow) => set({ showGlow }),
@@ -57,10 +76,30 @@ export const useGameStore = create<GameState>((set) => ({
   setIsGestureActive: (isGestureActive) => set({ isGestureActive }),
   updateCellInput: (x, y, input) => set((state) => {
     if (!state.grid) return state;
+    
+    // Check if cell is locked (part of a fully correct word)
+    const currentWords = getWordAt(state.grid, x, y);
+    const isLocked = currentWords.some(p => isWordPlacementCorrect(state.grid!, p));
+    if (isLocked) return state;
+
     const newCells = [...state.grid.cells];
     newCells[y] = [...newCells[y]];
     newCells[y][x] = { ...newCells[y][x], userInput: input.toUpperCase() };
-    return { grid: { ...state.grid, cells: newCells }, suggestionState: null };
+    
+    const newGrid = { ...state.grid, cells: newCells };
+    
+    // Check for victory
+    let newEndTime = state.endTime;
+    const allSolved = newGrid.placements.every(p => isWordPlacementCorrect(newGrid, p));
+    if (allSolved && !state.endTime) {
+      newEndTime = Date.now();
+    }
+
+    return { 
+      grid: newGrid, 
+      suggestionState: null,
+      endTime: newEndTime 
+    };
   }),
   showSuggestions: (cell, candidates, sourceTrail, strokes) =>
     set({
@@ -79,4 +118,10 @@ export const useGameStore = create<GameState>((set) => ({
   removeToast: (id) => set((state) => ({
     toasts: state.toasts.filter((t) => t.id !== id),
   })),
+  setMostNeededLetter: (mostNeededLetter) => set({ mostNeededLetter }),
+  setShowLeftPanel: (showLeftPanel) => set({ showLeftPanel }),
+  setActiveHint: (activeHint) => set({ activeHint }),
+  setGameId: (gameId) => set({ gameId }),
+  setStartTime: (startTime) => set({ startTime }),
+  setEndTime: (endTime) => set({ endTime }),
 }));
