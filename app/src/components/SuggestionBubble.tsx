@@ -1,32 +1,37 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { useGameStore } from '../store/useGameStore';
 import { finalizeHandwritingSample } from '../utils/handwritingSession';
 
 const CELL_SIZE = 40;
 const GRID_GAP = 1;
+const BUBBLE_TIMEOUT_MS = 5000;
 
 export function SuggestionBubble() {
-  const { suggestionState, updateCellInput, clearSuggestions } = useGameStore();
-  const bubbleRef = useRef<HTMLDivElement>(null);
+  const { suggestions } = useGameStore();
+
+  return (
+    <>
+      {suggestions.map((suggestion) => (
+        <SuggestionBubbleItem
+          key={`${suggestion.cell.x}-${suggestion.cell.y}`}
+          suggestion={suggestion}
+        />
+      ))}
+    </>
+  );
+}
+
+function SuggestionBubbleItem({ suggestion }: { suggestion: any }) {
+  const { updateCellInput, removeSuggestion } = useGameStore();
+  const { cell, candidates, strokes } = suggestion;
 
   useEffect(() => {
-    if (!suggestionState) return;
+    const timer = setTimeout(() => {
+      removeSuggestion(cell.x, cell.y);
+    }, BUBBLE_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [cell.x, cell.y, removeSuggestion]);
 
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!bubbleRef.current?.contains(event.target as Node)) {
-        clearSuggestions();
-      }
-    };
-
-    window.addEventListener('pointerdown', handlePointerDown);
-    return () => window.removeEventListener('pointerdown', handlePointerDown);
-  }, [suggestionState, clearSuggestions]);
-
-  if (!suggestionState?.cell || suggestionState.candidates.length === 0) {
-    return null;
-  }
-
-  const { cell, candidates, strokes } = suggestionState;
   const showBelow = cell.y === 0;
   const top = showBelow
     ? (cell.y * (CELL_SIZE + GRID_GAP)) + CELL_SIZE + 8
@@ -35,13 +40,12 @@ export function SuggestionBubble() {
 
   return (
     <div
-      ref={bubbleRef}
       className="absolute z-50 pointer-events-auto"
       style={{ top, left, transform: 'translateX(-50%)' }}
     >
       <div className="rounded-full border border-slate-600 bg-slate-900/95 px-1 py-1 shadow-2xl backdrop-blur-md ring-2 ring-blue-500/30">
         <div className="flex items-center gap-1">
-          {candidates.slice(0, 3).map((candidate) => (
+          {candidates.slice(0, 2).map((candidate: any) => (
             <button
               key={`${candidate.char}-${candidate.source}`}
               type="button"
@@ -55,13 +59,20 @@ export function SuggestionBubble() {
                   strokes,
                   source: 'suggestion-bubble',
                 });
-                clearSuggestions();
               }}
               title={`${candidate.char} (${Math.round(candidate.score * 100)}% via ${candidate.source})`}
             >
               {candidate.char}
             </button>
           ))}
+          <button
+            type="button"
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 text-sm font-black text-rose-500 transition-all hover:scale-110 hover:bg-rose-600 hover:text-white active:scale-95"
+            onClick={() => removeSuggestion(cell.x, cell.y)}
+            title="Cancel"
+          >
+            ✕
+          </button>
         </div>
       </div>
     </div>

@@ -2,8 +2,10 @@ import { useGameStore } from '../store/useGameStore';
 import { useHandwritingStore } from '../store/useHandwritingStore';
 
 export function SettingsComponent() {
-  const { language, setLanguage, showGlow, setShowGlow, suggestionState, showLeftPanel, setShowLeftPanel } = useGameStore();
+  const { language, setLanguage, showGlow, setShowGlow, suggestions, showLeftPanel, setShowLeftPanel } = useGameStore();
   const { trainMode } = useHandwritingStore();
+
+  const hasSuggestions = suggestions.length > 0;
 
   return (
     <div className="flex gap-4 items-center">
@@ -47,8 +49,8 @@ export function SettingsComponent() {
 
       <div className="hidden md:flex items-center gap-2">
         <span className="text-[10px] text-slate-500 font-bold uppercase">Ink</span>
-        <span className={`px-2 py-0.5 text-xs rounded border ${suggestionState ? 'bg-amber-600/20 text-amber-300 border-amber-600/40' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
-          {suggestionState ? 'CHOICES' : 'AUTO'}
+        <span className={`px-2 py-0.5 text-xs rounded border ${hasSuggestions ? 'bg-amber-600/20 text-amber-300 border-amber-600/40' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
+          {hasSuggestions ? 'CHOICES' : 'AUTO'}
         </span>
       </div>
 

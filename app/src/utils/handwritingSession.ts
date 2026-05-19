@@ -60,13 +60,18 @@ async function submitRegularSample(cell: string, label: string, strokes: StrokeI
     return;
   }
 
-  await submitSample({
+  const response = await submitSample({
     label,
     strokes,
     storedAs: 'regular',
     source,
     mode: 'play',
   });
+  
+  if (response) {
+    knnRecognizer.addExample(strokes, label, response.id);
+  }
+
   useHandwritingStore.getState().clearPendingInk(cell);
 }
 

@@ -4,7 +4,7 @@ import { EngineResult, RecognitionCandidate, StrokeInput } from '../utils/recogn
 import { getWordAt, isWordPlacementCorrect } from '../utils/validation';
 
 interface SuggestionState {
-  cell: { x: number; y: number } | null;
+  cell: { x: number; y: number };
   candidates: RecognitionCandidate[];
   sourceTrail: string[];
   strokes: StrokeInput;
@@ -24,7 +24,7 @@ interface GameState {
   selectedCell: { x: number; y: number } | null;
   hoveredCell: { x: number; y: number } | null;
   isGestureActive: boolean;
-  suggestionState: SuggestionState | null;
+  suggestions: SuggestionState[];
   toasts: ToastMessage[];
   mostNeededLetter: string | null;
   showLeftPanel: boolean;
@@ -40,8 +40,9 @@ interface GameState {
   setHoveredCell: (cell: { x: number; y: number } | null) => void;
   setIsGestureActive: (active: boolean) => void;
   updateCellInput: (x: number, y: number, input: string) => void;
-  showSuggestions: (cell: { x: number; y: number }, candidates: RecognitionCandidate[], sourceTrail: string[], strokes: StrokeInput) => void;
-  clearSuggestions: () => void;
+  addSuggestion: (cell: { x: number; y: number }, candidates: RecognitionCandidate[], sourceTrail: string[], strokes: StrokeInput) => void;
+  removeSuggestion: (x: number, y: number) => void;
+  clearAllSuggestions: () => void;
   addToast: (char: string, confidence: number, engines: EngineResult[]) => void;
   removeToast: (id: string) => void;
   setMostNeededLetter: (letter: string | null) => void;
@@ -59,7 +60,7 @@ export const useGameStore = create<GameState>((set) => ({
   selectedCell: null,
   hoveredCell: null,
   isGestureActive: false,
-  suggestionState: null,
+  suggestions: [],
   toasts: [],
   mostNeededLetter: null,
   showLeftPanel: true,
@@ -71,7 +72,7 @@ export const useGameStore = create<GameState>((set) => ({
   setLanguage: (language) => set({ language }),
   setShowGlow: (showGlow) => set({ showGlow }),
   setGrid: (grid) => set({ grid }),
-  setSelectedCell: (selectedCell) => set({ selectedCell, suggestionState: null }),
+  setSelectedCell: (selectedCell) => set({ selectedCell }),
   setHoveredCell: (hoveredCell) => set({ hoveredCell }),
   setIsGestureActive: (isGestureActive) => set({ isGestureActive }),
   updateCellInput: (x, y, input) => set((state) => {
@@ -104,20 +105,22 @@ export const useGameStore = create<GameState>((set) => ({
 
     return { 
       grid: newGrid, 
-      suggestionState: null,
+      suggestions: state.suggestions.filter(s => s.cell.x !== x || s.cell.y !== y),
       endTime: newEndTime 
     };
   }),
-  showSuggestions: (cell, candidates, sourceTrail, strokes) =>
-    set({
-      suggestionState: {
-        cell,
-        candidates,
-        sourceTrail,
-        strokes,
-      },
-    }),
-  clearSuggestions: () => set({ suggestionState: null }),
+  addSuggestion: (cell, candidates, sourceTrail, strokes) =>
+    set((state) => ({
+      suggestions: [
+        ...state.suggestions.filter(s => s.cell.x !== cell.x || s.cell.y !== cell.y),
+        { cell, candidates, sourceTrail, strokes },
+      ],
+    })),
+  removeSuggestion: (x, y) =>
+    set((state) => ({
+      suggestions: state.suggestions.filter(s => s.cell.x !== x || s.cell.y !== y),
+    })),
+  clearAllSuggestions: () => set({ suggestions: [] }),
   addToast: (char, confidence, engines) => set((state) => {
     const id = Math.random().toString(36).substring(2, 9);
     return { toasts: [{ id, char, confidence, engines }, ...state.toasts].slice(0, 3) };

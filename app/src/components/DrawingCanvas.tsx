@@ -5,7 +5,7 @@ import { cancelPendingSubmission, finalizeHandwritingSample } from '../utils/han
 import { recognizeHandwriting, warmRecognizers } from '../utils/recognizers/ocr';
 
 export function DrawingCanvas() {
-  const { grid, updateCellInput, setSelectedCell, isGestureActive, showSuggestions, clearSuggestions } = useGameStore();
+  const { grid, updateCellInput, setSelectedCell, isGestureActive, addSuggestion } = useGameStore();
   const { trainMode } = useHandwritingStore();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawingRef = useRef(false);
@@ -89,9 +89,7 @@ export function DrawingCanvas() {
         return;
       }
 
-      if (trainMode) {
-        showSuggestions({ x: cx, y: cy }, result.candidates, result.sourceTrail, strokes);
-      }
+      addSuggestion({ x: cx, y: cy }, result.candidates, result.sourceTrail, strokes);
     } catch (error) {
       console.error('Handwriting OCR error:', error);
     }
@@ -130,13 +128,12 @@ export function DrawingCanvas() {
       }
     }
 
-    await processOCR(cellX, cellY, strokes);
     clearCanvas();
+    void processOCR(cellX, cellY, strokes);
   };
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (!e.isPrimary || isGestureActive) return;
-    clearSuggestions();
 
     const rect = canvasRef.current!.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -145,6 +142,8 @@ export function DrawingCanvas() {
     const cellInfo = getCellFromCoords(x, y);
     if (!cellInfo) return;
     if (grid?.cells[cellInfo.cellY]?.[cellInfo.cellX]?.isBlack) return;
+
+    useGameStore.getState().removeSuggestion(cellInfo.cellX, cellInfo.cellY);
 
     if (activeCellRef.current) {
       if (activeCellRef.current.cellX !== cellInfo.cellX || activeCellRef.current.cellY !== cellInfo.cellY) {

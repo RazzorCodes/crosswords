@@ -21,8 +21,8 @@ export function GridComponent() {
     updateCellInput,
     hoveredCell,
     setIsGestureActive,
-    suggestionState,
-    clearSuggestions,
+    suggestions,
+    removeSuggestion,
     showLeftPanel,
     setActiveHint,
   } = useGameStore();
@@ -60,16 +60,17 @@ export function GridComponent() {
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (!grid) return;
-    const targetCell = suggestionState?.cell || selectedCell || hoveredCell;
-    if (!targetCell) return;
-    const { x, y } = targetCell;
+    const target = selectedCell || hoveredCell;
+    if (!target) return;
+    const { x, y } = target;
     const key = `${x}:${y}`;
+    const currentSuggestion = suggestions.find(s => s.cell.x === x && s.cell.y === y);
 
     if (e.key === 'Backspace' || e.key === 'Delete') {
       e.preventDefault();
       cancelPendingSubmission(key);
       updateCellInput(x, y, '');
-      if (suggestionState) clearSuggestions();
+      if (currentSuggestion) removeSuggestion(x, y);
       return;
     }
 
@@ -77,16 +78,15 @@ export function GridComponent() {
       e.preventDefault();
       const value = e.key.toUpperCase();
 
-      if (suggestionState) {
+      if (currentSuggestion) {
         updateCellInput(x, y, value);
         finalizeHandwritingSample({
           x,
           y,
           label: value,
-          strokes: suggestionState.strokes,
+          strokes: currentSuggestion.strokes,
           source: 'keyboard-correction',
         });
-        clearSuggestions();
         return;
       }
 
@@ -107,7 +107,7 @@ export function GridComponent() {
         setSelectedCell(nextCell);
       }
     }
-  }, [clearSuggestions, findNextOpenCell, grid, hoveredCell, selectedCell, setSelectedCell, suggestionState, updateCellInput]);
+  }, [findNextOpenCell, grid, hoveredCell, removeSuggestion, selectedCell, setSelectedCell, suggestions, updateCellInput]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
