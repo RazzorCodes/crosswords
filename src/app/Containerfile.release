@@ -1,0 +1,18 @@
+# Build stage
+FROM node:20-slim AS builder
+WORKDIR /app
+COPY src/app/package*.json ./
+RUN npm install
+COPY src/app/ .
+RUN rm -f public/models
+# Note: we don't copy models here because they are streamed at runtime
+RUN npm run build
+
+# Runtime stage
+FROM nginx:alpine
+COPY --from=builder /app/dist /usr/share/nginx/html
+COPY src/app/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 80
+ENTRYPOINT ["/entrypoint.sh"]

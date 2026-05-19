@@ -16,13 +16,21 @@ A handwriting-enabled crossword game with a continuous learning pipeline for let
 
 ## 📂 Repository Structure
 
--   `app/`: Vite/React frontend application.
--   `srv/`: Python API server for sample management.
--   `ai/`: Model training and evaluation scripts (CNN, SVM, k-NN).
+-   `src/app/`: Vite/React frontend application.
+-   `src/srv/`: Python API server for sample management.
+-   `src/ml/`: Model training and evaluation scripts (CNN, SVM, k-NN).
+-   `deploy/`: Deployment assets (Helm chart, GHA workflows, release scripts).
 -   `data/`: Structured storage for handwriting samples.
+-   `models/`: Source of truth for exported ONNX models.
 -   `docs/`: Detailed documentation for each component.
--   `models/`: Exported model files for inference.
--   `litellm/`: Configuration for External Teacher (LLM promotion).
+
+## 🚢 Release & Deployment
+
+The project is configured for automated releases via GitHub Actions.
+- **Release Mode**: A single-container app that streams ONNX models from GitHub Release assets.
+- **Dev Mode**: Full stack (App, Srv, ML) for local development and training.
+- **Helm Chart**: Located in `deploy/helm`, supports both modes.
+- **Dynamic Models**: Models are fetched at runtime based on `MODEL_RELEASE_TAG` or `MODEL_BASE_URL`.
 
 ## 📖 Documentation
 

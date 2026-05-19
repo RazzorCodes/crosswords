@@ -1,0 +1,43 @@
+# mode: release | dev
+mode: release
+
+app:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/andrei/crosswords-app
+    pullPolicy: IfNotPresent
+    tag: "latest"
+  service:
+    type: ClusterIP
+    port: 80
+  ingress:
+    enabled: false
+  env:
+    # Set this to stream models from a GitHub release
+    # MODEL_RELEASE_TAG: "v1.0.0"
+    # GITHUB_REPOSITORY: "andrei/crosswords"
+    # Or set a direct base URL
+    # MODEL_BASE_URL: "https://example.com/models"
+
+# Services only deployed if mode == "dev"
+srv:
+  enabled: false
+  image:
+    repository: ghcr.io/andrei/crosswords-srv
+    tag: "latest"
+  env:
+    EXTERNAL_TEACHER_ENABLED: "0"
+    TEACHER_OPENAPI_ENDPOINT: ""
+    TEACHER_MODEL_NAME: ""
+  persistence:
+    enabled: true
+    size: 1Gi
+
+ml:
+  enabled: false
+  image:
+    repository: ghcr.io/andrei/crosswords-ml
+    tag: "latest"
+  persistence:
+    enabled: true
+    size: 5Gi

@@ -25,7 +25,7 @@
             ]))
           ];
           shellHook = ''
-            export PYTHONPATH=$PYTHONPATH:$(pwd)/ai
+            export PYTHONPATH=$PYTHONPATH:$(pwd)/src/ml:$(pwd)/src/srv
             echo "Crosswords dev shell loaded (Node.js + lightweight Python)."
             echo "CNN/ONNX training remains container-based; the shell intentionally avoids torch-bin."
           '';

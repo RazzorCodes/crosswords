@@ -2,7 +2,7 @@ services:
   app:
     build:
       context: .
-      dockerfile: app/Containerfile
+      dockerfile: src/app/Containerfile
       args:
         VITE_SRV_URL: http://localhost:8000
         VITE_TRAIN_MODE: ${VITE_TRAIN_MODE:-false}
@@ -16,18 +16,23 @@ services:
   srv:
     build:
       context: .
-      dockerfile: srv/Containerfile
+      dockerfile: src/srv/Containerfile
     ports:
       - "8000:8000"
     volumes:
       - ./data:/data:z
+    env_file:
+      - .env
     environment:
       - DATA_ROOT=/data
+      - EXTERNAL_TEACHER_ENABLED=${EXTERNAL_TEACHER_ENABLED:-0}
+      - TEACHER_OPENAPI_ENDPOINT=${TEACHER_OPENAPI_ENDPOINT}
+      - TEACHER_MODEL_NAME=${TEACHER_MODEL_NAME}
 
-  ai:
+  ml:
     build:
       context: .
-      dockerfile: ai/Containerfile
+      dockerfile: src/ml/Containerfile
     volumes:
       - ./data:/data:z
       - ./models:/models:z
@@ -37,6 +42,4 @@ services:
       - TRAIN_POLL_SECONDS=10
       - TRAIN_MIN_INTERVAL_SECONDS=60
       - TRAIN_MIN_SAMPLES_DELTA=10
-    command: ["python", "ai/train_loop.py"]
-    profiles:
-      - train
+    command: ["python", "src/ml/train_loop.py"]

@@ -151,11 +151,14 @@ export async function warmRecognizers() {
 
   warmPromise = (async () => {
     try {
+      const config = (window as any).CROSSWORDS_CONFIG || {};
+      const baseUrl = (config.MODEL_BASE_URL || '/models').replace(/\/$/, '');
+      
       if (!svmSession) {
-        svmSession = await InferenceSession.create('/models/svm.onnx');
+        svmSession = await InferenceSession.create(`${baseUrl}/svm.onnx`);
       }
       if (!cnnSession) {
-        cnnSession = await InferenceSession.create('/models/cnn.onnx');
+        cnnSession = await InferenceSession.create(`${baseUrl}/cnn.onnx`);
       }
       lastWarmFailureAt = 0;
     } catch (error) {

@@ -1,9 +1,9 @@
 FROM python:3.11-slim
 WORKDIR /app
 RUN pip install --no-cache-dir pillow
-COPY srv /app/srv
-COPY sample_store.py /app/sample_store.py
+COPY src/srv /app/src/srv
+ENV PYTHONPATH=/app/src/srv
 EXPOSE 8000
 ENV PORT=8000
 ENV DATA_ROOT=/data
-CMD ["python", "srv/server.py"]
+CMD ["python", "src/srv/server.py"]

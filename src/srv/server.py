@@ -226,7 +226,7 @@ def refresh_teacher_state() -> dict[str, Any]:
         "hq_share": snapshot.high_quality_share,
         "target_share": TARGET_HIGH_QUALITY_SHARE,
         "pending_queue_size": len(snapshot.pending_batch_candidates()),
-        "model": os.getenv("LITELLM_MODEL", "fast"),
+        "model": os.getenv("TEACHER_MODEL_NAME") or os.getenv("LITELLM_MODEL", "fast"),
     }
 
     if not base_state["enabled"]:
@@ -234,7 +234,7 @@ def refresh_teacher_state() -> dict[str, Any]:
             teacher_state.update(base_state)
         return dict(base_state)
 
-    base_url = get_litellm_base_url()
+    base_url = (os.getenv("TEACHER_OPENAPI_ENDPOINT") or get_litellm_base_url()).strip().rstrip("/")
     model_name = base_state["model"]
     if not base_url or not model_name:
         base_state["reason"] = "missing_litellm_configuration"
@@ -346,8 +346,8 @@ def parse_teacher_csv(raw_text: str) -> list[str] | None:
 
 
 def classify_pending_batch(batch: list[dict[str, Any]]) -> list[str] | None:
-    base_url = get_litellm_base_url()
-    model_name = os.getenv("LITELLM_MODEL", "fast")
+    base_url = (os.getenv("TEACHER_OPENAPI_ENDPOINT") or get_litellm_base_url()).strip().rstrip("/")
+    model_name = os.getenv("TEACHER_MODEL_NAME") or os.getenv("LITELLM_MODEL", "fast")
     image_b64 = render_batch_image(batch)
     prompt = (
         "Return exactly 20 comma-separated labels in row-major order. "
