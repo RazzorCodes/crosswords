@@ -40,7 +40,7 @@ MAX_POINTS_PER_STROKE = 4096
 TARGET_HIGH_QUALITY_SHARE = 0.20
 TEACHER_POLL_SECONDS = max(5, int(os.getenv("TEACHER_POLL_SECONDS", "15")))
 TILE_SIZE = 64
-BATCH_SIZE = 20
+BATCH_SIZE = 50
 
 teacher_state_lock = threading.Lock()
 teacher_state: dict[str, Any] = {
@@ -54,7 +54,7 @@ teacher_state: dict[str, Any] = {
     "hq_share": 0.0,
     "target_share": TARGET_HIGH_QUALITY_SHARE,
     "pending_queue_size": 0,
-    "model": os.getenv("LITELLM_MODEL", "fast"),
+    "model": os.getenv("TEACHER_MODEL_NAME") or os.getenv("LITELLM_MODEL", "fast"),
 }
 
 
@@ -216,7 +216,7 @@ def find_multimodal_model_info(value: Any, model_name: str) -> bool:
 def refresh_teacher_state() -> dict[str, Any]:
     snapshot = load_snapshot(include_legacy=False)
     base_state = {
-        "enabled": os.getenv("EXTERNAL_TEACHER_ENABLED", "0") == "1",
+        "enabled": os.getenv("EXTERNAL_TEACHER_ENABLED", "1") == "1",
         "configured": False,
         "health_ok": False,
         "model_supports_multimodal": False,
@@ -234,7 +234,7 @@ def refresh_teacher_state() -> dict[str, Any]:
             teacher_state.update(base_state)
         return dict(base_state)
 
-    base_url = (os.getenv("TEACHER_OPENAPI_ENDPOINT") or get_litellm_base_url()).strip().rstrip("/")
+    base_url = (os.getenv("TEACHER_OPENAPI_ENDPOINT") or os.getenv("LITELLM_BASE_URL") or "http://localhost:4000").strip().rstrip("/")
     model_name = base_state["model"]
     if not base_url or not model_name:
         base_state["reason"] = "missing_litellm_configuration"
@@ -316,11 +316,12 @@ def normalize_strokes_to_tile(strokes: list[list[dict[str, float]]], size: int =
 
 
 def render_batch_image(samples: list[dict[str, Any]]) -> str:
-    sheet = Image.new("L", (5 * TILE_SIZE, 4 * TILE_SIZE), 255)
+    # 10 columns, 5 rows for BATCH_SIZE=50
+    sheet = Image.new("L", (10 * TILE_SIZE, 5 * TILE_SIZE), 255)
     for index, sample in enumerate(samples):
         tile = normalize_strokes_to_tile(sample["regular"]["strokes"])
-        row = index // 5
-        col = index % 5
+        row = index // 10
+        col = index % 10
         sheet.paste(tile, (col * TILE_SIZE, row * TILE_SIZE))
 
     buffer = io.BytesIO()
@@ -350,7 +351,7 @@ def classify_pending_batch(batch: list[dict[str, Any]]) -> list[str] | None:
     model_name = os.getenv("TEACHER_MODEL_NAME") or os.getenv("LITELLM_MODEL", "fast")
     image_b64 = render_batch_image(batch)
     prompt = (
-        "Return exactly 20 comma-separated labels in row-major order. "
+        f"Return exactly {BATCH_SIZE} comma-separated labels in row-major order. "
         "Each label must be a single uppercase letter A-Z or ?. No extra text."
     )
     payload = {

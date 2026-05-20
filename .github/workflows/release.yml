@@ -67,6 +67,24 @@ jobs:
       - name: Wait for Docker
         run: until docker info >/dev/null 2>&1; do sleep 1; done
 
+      - name: Build Model Artifacts
+        run: |
+          set -euo pipefail
+          docker build -t crosswords-ml-artifacts -f src/ml/Containerfile .
+          rm -rf /models
+          mkdir -p /models
+          docker run --rm \
+            -e DATA_ROOT=/data \
+            -e ORT_WEB_VERSION=1.26.0 \
+            -v /data:/data:ro \
+            -v /models:/models \
+            crosswords-ml-artifacts \
+            python src/ml/generate_handwriting_artifacts.py \
+              --models-dir /models \
+              --public-base-url /models \
+              --version "${{ env.VERSION }}" \
+              --train-baseline
+
       - name: Build and Push App Container
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
@@ -82,6 +100,9 @@ jobs:
           tag_name: ${{ env.GIT_TAG }}
           name: Release ${{ env.VERSION }}
           files: |
-            /models/*
+            /models/manifest.json
+            /models/export-metadata.json
+            /models/*.onnx
+            /models/ort-training/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

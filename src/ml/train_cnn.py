@@ -42,6 +42,8 @@ def train_cnn() -> None:
 
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
     model = get_cnn_model()
+    num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Training CNN with {num_params} parameters...")
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 

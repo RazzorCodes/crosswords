@@ -47,6 +47,7 @@ interface HandwritingState {
   upsertPendingInk: (item: PendingInkSubmission) => void;
   clearPendingInk: (cellKey: string) => void;
   clearAllPendingInk: () => void;
+  clearPersonalizedModels: () => Promise<void>;
 }
 
 export const useHandwritingStore = create<HandwritingState>((set) => ({
@@ -88,4 +89,8 @@ export const useHandwritingStore = create<HandwritingState>((set) => ({
     pendingInk: state.pendingInk.filter((entry) => entry.cellKey !== cellKey),
   })),
   clearAllPendingInk: () => set({ pendingInk: [] }),
+  clearPersonalizedModels: async () => {
+    const { handwritingModule } = await import('../utils/handwriting/module');
+    await handwritingModule.clearPersonalizedModels();
+  },
 }));

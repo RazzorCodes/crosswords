@@ -78,6 +78,32 @@ export interface CnnTrainingRuntimeUrls {
 
 export type CnnTrainingStage = 'head-only' | 'partial-finetune';
 
+export type CnnTrainingProgressStep =
+  | 'preparing'
+  | 'downloading'
+  | 'training'
+  | 'evaluating'
+  | 'exporting'
+  | 'ready';
+
+export interface CnnTrainingProgress {
+  step: CnnTrainingProgressStep;
+  progress: number;
+  message: string;
+  stage: CnnTrainingStage;
+  epoch?: number;
+  epochs?: number;
+  batch?: number;
+  batches?: number;
+  loss?: number;
+  elapsedMs?: number;
+}
+
+export interface CnnTrainingAvailability {
+  available: boolean;
+  reasons: string[];
+}
+
 export interface BaselineArtifactManifest {
   version: string;
   labelMap: string[];
@@ -210,10 +236,11 @@ export interface HandwritingModuleEventMap {
     progress: number;
     message: string;
     generation: number;
+    details?: CnnTrainingProgress | { reasons: string[] };
     trainingState: TrainingState;
   };
   'training-completed': {
-    snapshot: FeatureClassifierSnapshot;
+    snapshot: FeatureClassifierSnapshot | null;
     trainingState: TrainingState;
   };
   'training-rejected': {

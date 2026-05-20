@@ -30,7 +30,9 @@ function summarizeHandwritingEvent(event: HandwritingModuleEvent): string {
     case 'training-progress':
       return `Training progress: ${event.payload.message}`;
     case 'training-completed':
-      return `Training accepted: ${event.payload.snapshot.id}`;
+      return event.payload.snapshot
+        ? `Training accepted: ${event.payload.snapshot.id}`
+        : 'Training accepted: CNN updated';
     case 'training-rejected':
       return `Training rejected: ${event.payload.reason}`;
     case 'artifacts-updated':

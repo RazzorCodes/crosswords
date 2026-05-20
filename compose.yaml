@@ -10,7 +10,7 @@ services:
     ports:
       - "5173:80"
     volumes:
-      - ./models:/app/models:ro
+      - browser-model-runtime:/app/models:ro
     environment:
       - APP_MODE=dev
       - MODEL_BASE_URL=/models
@@ -27,10 +27,12 @@ services:
       context: .
       dockerfile: src/ml/Containerfile
     volumes:
-      - ./models:/models
-      - ./models/ort-training:/ort-web-training:ro
+      - ./data:/data:ro,z
+      - browser-model-runtime:/models
     environment:
+      - DATA_ROOT=/data
       - MODELS_DIR=/models
+      - ORT_WEB_VERSION=${ORT_WEB_VERSION:-1.26.0}
     command:
       - python
       - src/ml/generate_handwriting_artifacts.py
@@ -40,9 +42,7 @@ services:
       - /models
       - --version
       - dev
-      - --train-baseline
-      - --ort-web-runtime-dir
-      - /ort-web-training
+      - --require-training
 
   srv:
     profiles: ["dev"]
@@ -68,7 +68,7 @@ services:
       dockerfile: src/ml/Containerfile
     volumes:
       - ./data:/data:z
-      - ./models:/models
+      - browser-model-runtime:/models
     environment:
       - DATA_ROOT=/data
       - MODELS_DIR=/models
@@ -87,3 +87,6 @@ services:
     environment:
       - APP_MODE=release
       - MODEL_BASE_URL=${MODEL_BASE_URL:-https://github.com/RazzorCodes/crosswords/releases/latest/download}
+
+volumes:
+  browser-model-runtime:

@@ -37,6 +37,7 @@ const MIN_READY_USER_INPUTTED_PER_LETTER = 1;
 const HOLDOUT_FRACTION = 0.2;
 const OVERALL_TOLERANCE = 0.03;
 const IMPLICIT_TOLERANCE = 0.05;
+const USER_INPUTTED_TOLERANCE = 0.02;
 const RECENT_SAMPLE_LIMIT = 12;
 
 type LegacyPersistedHandwritingState = Partial<{
@@ -477,7 +478,7 @@ export function shouldAcceptCandidateSnapshot(
   }
 
   return (
-    candidateMetrics.user_inputtedAccuracy >= currentMetrics.user_inputtedAccuracy &&
+    candidateMetrics.user_inputtedAccuracy >= currentMetrics.user_inputtedAccuracy - USER_INPUTTED_TOLERANCE &&
     candidateMetrics.implicitAccuracy >= currentMetrics.implicitAccuracy - IMPLICIT_TOLERANCE &&
     candidateMetrics.overallAccuracy >= currentMetrics.overallAccuracy - OVERALL_TOLERANCE
   );

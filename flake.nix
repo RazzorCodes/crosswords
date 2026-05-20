@@ -31,6 +31,8 @@
               numpy
               scikit-learn
               pillow
+              onnx
+              onnxruntime
             ]))
           ];
           shellHook = ''

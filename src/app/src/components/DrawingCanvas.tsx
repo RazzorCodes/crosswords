@@ -73,7 +73,7 @@ export function DrawingCanvas() {
       const bestChar = result.chosenChar || result.candidates[0]?.char || '?';
       const bestScore = result.candidates[0]?.score || 0;
 
-      if (trainMode) {
+      if (trainMode && result.status !== 'confirmed') {
         useGameStore.getState().addToast(bestChar, bestScore, result.engineResults || []);
       }
 

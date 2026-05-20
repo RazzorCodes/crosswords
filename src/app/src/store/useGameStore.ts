@@ -149,7 +149,7 @@ export const useGameStore = create<GameState>((set) => ({
       generation: progress.generation,
       progress: 0,
       feature: 'svm/feature waiting',
-      cnn: 'cnn waiting',
+      cnn: 'not started',
       finalizing: null,
       status: 'running' as const,
     };
@@ -157,10 +157,13 @@ export const useGameStore = create<GameState>((set) => ({
       ...current,
       generation: progress.generation,
       progress: Math.max(current.progress, progress.progress),
-      status: progress.status,
+      status: progress.phase === 'finalizing' ? progress.status : current.status,
     };
     if (progress.phase === 'feature') {
       next.feature = progress.message;
+      if (progress.status === 'rejected') {
+        next.cnn = 'not run';
+      }
     } else if (progress.phase === 'cnn') {
       next.cnn = progress.message;
     } else {

@@ -30,6 +30,7 @@ export function HandwritingPanel({ docked = false }: HandwritingPanelProps) {
     lastEvent,
     diagnosticLogs,
     lastPrediction,
+    clearPersonalizedModels,
   } = useHandwritingStore();
   const isDevMode = resolveAppMode() === 'dev';
 
@@ -208,6 +209,19 @@ export function HandwritingPanel({ docked = false }: HandwritingPanelProps) {
                 ))}
               </div>
             </div>
+          )}
+
+          {isDevMode && (
+            <button
+              onClick={() => {
+                if (window.confirm('Are you sure you want to clear all personalized models and revert to base models?')) {
+                  void clearPersonalizedModels();
+                }
+              }}
+              className="w-full rounded-xl border border-rose-500/30 bg-rose-500/10 py-2 text-xs font-bold text-rose-300 hover:bg-rose-500/20"
+            >
+              Reset Models
+            </button>
           )}
         </div>
       )}

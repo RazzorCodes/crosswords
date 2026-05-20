@@ -9,13 +9,15 @@ import type {
   TrainingState,
 } from '../src/utils/handwriting/types';
 import { BrowserHandwritingModule } from '../src/utils/handwriting/module';
-import type { CnnTrainingRuntimeLike } from '../src/utils/handwriting/cnnTrainingRuntime';
+import { CnnTrainingRuntime, getCnnTrainingAvailability, type CnnTrainingRuntimeLike } from '../src/utils/handwriting/cnnTrainingRuntime';
 import { MemoryKeyValueStore } from '../src/utils/handwriting/storage';
 import { createFeedbackDevGrid } from '../src/utils/devBoard';
 import {
   buildBalancedDataset,
+  createExportBundle,
   createDefaultBaselineManifest,
   createInitialTrainingState,
+  createPersistedState,
   decideTrainingTrigger,
   sanitizeImportedState,
   shouldAcceptCandidateSnapshot,
@@ -140,8 +142,16 @@ test('shouldAcceptCandidateSnapshot enforces regression gating', () => {
     overallAccuracy: 0.73,
   }), true);
 
+  // Still accepts within 0.02 tolerance
   assert.equal(shouldAcceptCandidateSnapshot(current, {
-    user_inputtedAccuracy: 0.79,
+    user_inputtedAccuracy: 0.78,
+    implicitAccuracy: 0.8,
+    overallAccuracy: 0.8,
+  }), true);
+
+  // Rejects below tolerance
+  assert.equal(shouldAcceptCandidateSnapshot(current, {
+    user_inputtedAccuracy: 0.77,
     implicitAccuracy: 0.8,
     overallAccuracy: 0.8,
   }), false);
@@ -185,6 +195,40 @@ test('createFeedbackDevGrid returns one FEEDBACK across placement', () => {
     ['F', 'E', 'E', 'D', 'B', 'A', 'C', 'K'],
   );
   assert.equal(grid.cells.flat().filter((cell) => !cell.isBlack).length, 8);
+});
+
+test('CNN training availability reports exact manifest blockers', () => {
+  const manifest = createDefaultBaselineManifest('/models');
+  const availability = getCnnTrainingAvailability(manifest);
+  assert.equal(availability.available, false);
+  assert.deepEqual(availability.reasons, [
+    'manifest disables CNN training',
+    'missing ORT Web training module',
+    'missing ORT Web training WASM',
+    'missing CNN training model',
+    'missing CNN eval model',
+    'missing CNN optimizer model',
+    'missing CNN checkpoint',
+  ]);
+
+  manifest.cnn = {
+    inferenceUrl: '/models/cnn.onnx',
+    supportsTraining: true,
+    trainingArtifacts: {
+      trainUrl: '/models/ort-training/training_model.onnx',
+      evalUrl: '/models/ort-training/eval_model.onnx',
+      optimizerUrl: '/models/ort-training/optimizer_model.onnx',
+      checkpointUrl: '/models/ort-training/checkpoint',
+      exportMetadataUrl: '/models/export-metadata.json',
+    },
+    trainingRuntime: {
+      moduleUrl: '/models/ort-training/ort-training-web.mjs',
+      wasmUrl: '/models/ort-training/',
+      simdWasmUrl: '/models/ort-training/ort-wasm-simd.wasm',
+      threadedWasmUrl: '/models/ort-training/ort-wasm-simd-threaded.wasm',
+    },
+  };
+  assert.equal(new CnnTrainingRuntime(manifest).getAvailability().available, true);
 });
 
 test('BrowserHandwritingModule accepts paired centroid and CNN candidates atomically', async () => {
@@ -254,7 +298,7 @@ test('BrowserHandwritingModule accepts paired centroid and CNN candidates atomic
   }
 });
 
-test('training progress events report centroid-only path with CNN skipped', async () => {
+test('training progress events report centroid-only path with CNN unavailable reason', async () => {
   const restoreFetch = installManifestFetch();
   try {
     const module = new BrowserHandwritingModule(new MemoryKeyValueStore());
@@ -274,6 +318,7 @@ test('training progress events report centroid-only path with CNN skipped', asyn
       'finalizing:running',
       'finalizing:ready',
     ]);
+    assert.equal(progress.find((event) => event.phase === 'cnn')?.message, 'cnn unavailable: manifest disables CNN training');
     assert.equal(progress[progress.length - 1]?.progress, 100);
 
     const state = module.getTrainingState();
@@ -300,13 +345,26 @@ test('training progress events report paired centroid and CNN acceptance', async
   };
   const cnnTrainer: CnnTrainingRuntimeLike = {
     isAvailable: () => true,
-    trainCandidate: async () => ({
-      artifacts: cnnArtifacts,
-      metrics: cnnArtifacts.metrics!,
-      stage: 'head-only',
-      accepted: true,
-      rejectionReason: null,
-    }),
+    getAvailability: () => ({ available: true, reasons: [] }),
+    trainCandidate: async (_training, _holdout, _previous, options) => {
+      options?.onProgress?.({
+        step: 'training',
+        progress: 0.5,
+        message: 'cnn epoch 1/1 batch 1/1',
+        stage: 'head-only',
+        epoch: 1,
+        epochs: 1,
+        batch: 1,
+        batches: 1,
+      });
+      return {
+        artifacts: cnnArtifacts,
+        metrics: cnnArtifacts.metrics!,
+        stage: 'head-only',
+        accepted: true,
+        rejectionReason: null,
+      };
+    },
   };
 
   try {
@@ -327,11 +385,128 @@ test('training progress events report paired centroid and CNN acceptance', async
       'feature:running',
       'feature:ready',
       'cnn:running',
+      'cnn:running',
       'cnn:ready',
       'finalizing:running',
       'finalizing:ready',
     ]);
+    assert.equal(progress.find((event) => event.message === 'cnn epoch 1/1 batch 1/1')?.progress, 72.5);
     assert.equal(progress[progress.length - 1]?.message, 'ready! v1');
+  } finally {
+    restoreFetch();
+  }
+});
+
+test('feature rejection does not block accepted CNN personalization', async () => {
+  const manifest = createDefaultBaselineManifest('/models');
+  manifest.cnn.supportsTraining = true;
+  const restoreFetch = installManifestFetch(manifest);
+  const cnnArtifacts: PersonalizedCnnArtifacts = {
+    checkpoint: new ArrayBuffer(4),
+    inferenceModel: new ArrayBuffer(8),
+    exportMetadata: null,
+    metrics: { user_inputtedAccuracy: 1, implicitAccuracy: 1, overallAccuracy: 1 },
+    stage: 'head-only',
+    updatedAt: 999,
+  };
+  const cnnTrainer: CnnTrainingRuntimeLike = {
+    isAvailable: () => true,
+    getAvailability: () => ({ available: true, reasons: [] }),
+    trainCandidate: async () => ({
+      artifacts: cnnArtifacts,
+      metrics: cnnArtifacts.metrics!,
+      stage: 'head-only',
+      accepted: true,
+      rejectionReason: null,
+    }),
+  };
+
+  try {
+    const module = new BrowserHandwritingModule(new MemoryKeyValueStore());
+    const events: HandwritingModuleEvent[] = [];
+    module.subscribe((event) => events.push(event));
+    await module.init({
+      baselineManifestUrl: '/models/manifest.json',
+      cnnTrainingRuntime: cnnTrainer,
+    });
+
+    const baseline = createDefaultBaselineManifest('/models');
+    const importedState = createInitialTrainingState(baseline, 2_000_000);
+    importedState.latestMetrics = {
+      user_inputtedAccuracy: 1,
+      implicitAccuracy: 1,
+      overallAccuracy: 1,
+    };
+    importedState.personalizationGeneration = 4;
+    importedState.latestSnapshotId = 'existing-feature';
+    await module.importDevBundle(createExportBundle(createPersistedState(
+      baseline,
+      [],
+      null,
+      null,
+      importedState,
+    )));
+
+    await recordBalancedMilestone(module);
+
+    const state = module.getTrainingState();
+    assert.equal(state.lastTrainingOutcome, 'accepted');
+    assert.equal(state.personalizationGeneration, 5);
+    assert.equal(state.latestSnapshotId, 'existing-feature');
+    assert.equal(state.trainerStatus.cnnTrainingStatus, 'accepted');
+    assert.equal(state.trainerStatus.personalizedCnnAvailable, true);
+    assert.equal(state.trainerStatus.activeModelGeneration, 5);
+
+    const progress = events
+      .filter((event): event is Extract<HandwritingModuleEvent, { type: 'training-progress' }> => event.type === 'training-progress')
+      .map((event) => event.payload);
+    assert.equal(progress.some((event) => event.phase === 'feature' && event.status === 'rejected'), true);
+    assert.equal(progress.some((event) => event.phase === 'cnn' && event.status === 'ready'), true);
+    assert.equal(events.some((event) => event.type === 'training-completed' && event.payload.snapshot === null), true);
+  } finally {
+    restoreFetch();
+  }
+});
+
+test('CNN rejection does not block accepted feature personalization', async () => {
+  const manifest = createDefaultBaselineManifest('/models');
+  manifest.cnn.supportsTraining = true;
+  const restoreFetch = installManifestFetch(manifest);
+  const cnnTrainer: CnnTrainingRuntimeLike = {
+    isAvailable: () => true,
+    getAvailability: () => ({ available: true, reasons: [] }),
+    trainCandidate: async () => ({
+      artifacts: null,
+      metrics: { user_inputtedAccuracy: 0, implicitAccuracy: 0, overallAccuracy: 0 },
+      stage: 'head-only',
+      accepted: false,
+      rejectionReason: 'mock cnn rejection',
+    }),
+  };
+
+  try {
+    const module = new BrowserHandwritingModule(new MemoryKeyValueStore());
+    const events: HandwritingModuleEvent[] = [];
+    module.subscribe((event) => events.push(event));
+    await module.init({
+      baselineManifestUrl: '/models/manifest.json',
+      cnnTrainingRuntime: cnnTrainer,
+    });
+
+    await recordBalancedMilestone(module);
+
+    const state = module.getTrainingState();
+    assert.equal(state.lastTrainingOutcome, 'accepted');
+    assert.equal(state.personalizationGeneration, 1);
+    assert.equal(state.latestSnapshotId !== null, true);
+    assert.equal(state.trainerStatus.cnnTrainingStatus, 'rejected');
+    assert.equal(state.trainerStatus.personalizedCnnAvailable, false);
+
+    const progress = events
+      .filter((event): event is Extract<HandwritingModuleEvent, { type: 'training-progress' }> => event.type === 'training-progress')
+      .map((event) => event.payload);
+    assert.equal(progress.some((event) => event.phase === 'cnn' && event.status === 'rejected'), true);
+    assert.equal(progress.some((event) => event.phase === 'finalizing' && event.status === 'ready'), true);
   } finally {
     restoreFetch();
   }
@@ -352,6 +527,7 @@ test('rejected training reports progress and does not replace active models', as
 
     const state = module.getTrainingState();
     assert.equal(state.lastTrainingOutcome, 'rejected');
+    assert.equal(state.pendingUserInputtedSinceTraining, 0);
     assert.equal(state.personalizationGeneration, 0);
     assert.equal(state.latestSnapshotId, null);
     assert.equal(module.getDiagnostics().activeModelGeneration, 0);
@@ -430,6 +606,61 @@ test('accepted personalized CNN replaces baseline inference session on next pred
   }
 });
 
+test('predict auto-confirms strong k-NN and CNN consensus even if feature disagrees', async () => {
+  const originalCreate = InferenceSession.create;
+  (InferenceSession as unknown as { create: (source: unknown) => Promise<unknown> }).create = async () => ({
+    inputNames: ['input'],
+    outputNames: ['output'],
+    run: async () => ({
+      output: {
+        data: Array.from({ length: 26 }, (_, index) => index === 0 ? 10 : 0),
+      },
+    }),
+  });
+
+  const manifest = createDefaultBaselineManifest('/models');
+  manifest.version = 'consensus-test';
+  manifest.cnn.inferenceUrl = '/models/cnn.onnx';
+  manifest.featureClassifier = {
+    id: 'baseline-feature',
+    version: 'baseline',
+    createdAt: 1,
+    centroids: [
+      { label: 'A', centroid: new Array(30).fill(100), count: 1 },
+      { label: 'B', centroid: new Array(30).fill(0), count: 1 },
+    ],
+    labelMap: ['A', 'B'],
+    metrics: { user_inputtedAccuracy: 1, implicitAccuracy: 1, overallAccuracy: 1 },
+    datasetSize: 2,
+    readyLetters: ['A', 'B'],
+    reason: 'milestone-50',
+  };
+  const restoreFetch = installManifestFetch(manifest);
+  const strokes = [[{ x: 0, y: 0, t: 0 }, { x: 1, y: 1, t: 1 }, { x: 2, y: 2, t: 2 }]];
+
+  try {
+    const module = new BrowserHandwritingModule(new MemoryKeyValueStore());
+    await module.init({
+      baselineManifestUrl: '/models/manifest.json',
+    });
+
+    await module.recordAcceptedSample({
+      label: 'A',
+      acceptance: 'user_inputted',
+      source: 'test',
+      createdAt: 10,
+      strokes,
+    });
+
+    const prediction = await module.predict(strokes);
+    assert.equal(prediction.status, 'confirmed');
+    assert.equal(prediction.chosenLabel, 'A');
+  } finally {
+    (InferenceSession as unknown as { create: typeof originalCreate }).create = originalCreate;
+    restoreFetch();
+  }
+});
+
 test('training toast persists, mutates in place, and can be closed', () => {
   const baseline = createDefaultBaselineManifest('/models');
   const trainingState = createInitialTrainingState(baseline, 2_000_000);
@@ -447,6 +678,20 @@ test('training toast persists, mutates in place, and can be closed', () => {
   const first = useGameStore.getState().trainingToast;
   assert.equal(first?.id, 'training-progress');
   assert.equal(first?.progress, 15);
+  assert.equal(first?.cnn, 'not started');
+
+  useGameStore.getState().updateTrainingToast({
+    ...started,
+    status: 'rejected',
+    progress: 100,
+    message: 'rejected: feature regression gate',
+  });
+  const rejected = useGameStore.getState().trainingToast;
+  assert.equal(rejected?.feature, 'rejected: feature regression gate');
+  assert.equal(rejected?.cnn, 'not run');
+
+  useGameStore.setState({ trainingToast: null });
+  useGameStore.getState().updateTrainingToast(started);
 
   useGameStore.getState().updateTrainingToast({
     ...started,

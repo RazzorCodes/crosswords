@@ -28,8 +28,14 @@ const MIME_TYPES = {
   '.woff2': 'font/woff2',
 };
 
+const BASE_HEADERS = {
+  'Cross-Origin-Embedder-Policy': 'require-corp',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Resource-Policy': 'same-origin',
+};
+
 function send(res, status, body, headers = {}) {
-  res.writeHead(status, headers);
+  res.writeHead(status, { ...BASE_HEADERS, ...headers });
   if (body) {
     res.end(body);
     return;
@@ -50,6 +56,14 @@ function resolveStaticPath(pathname) {
   return filePath;
 }
 
+function isLocalRuntimeAsset(pathname) {
+  return [
+    '/models/ort-training/ort-training-web.mjs',
+    '/models/ort-training/ort-wasm-simd.wasm',
+    '/models/ort-training/ort-wasm-simd-threaded.wasm',
+  ].includes(pathname);
+}
+
 async function serveFile(req, res, filePath) {
   try {
     const fileStat = await stat(filePath);
@@ -58,6 +72,7 @@ async function serveFile(req, res, filePath) {
     }
 
     res.writeHead(200, {
+      ...BASE_HEADERS,
       'Content-Length': String(fileStat.size),
       'Content-Type': contentTypeFor(filePath),
     });
@@ -80,9 +95,23 @@ async function proxyModel(req, res, pathname) {
   }
 
   const assetPath = pathname.replace(/^\/models\//, '/');
-  const upstreamUrl = `${UPSTREAM_MODEL_BASE_URL}${assetPath}`;
+  let upstreamUrl = `${UPSTREAM_MODEL_BASE_URL}${assetPath}`;
   const upstreamResponse = await fetch(upstreamUrl, { redirect: 'follow' });
+  if (!upstreamResponse.ok && assetPath.startsWith('/ort-training/')) {
+    const flatAssetPath = `/${assetPath.split('/').pop()}`;
+    upstreamUrl = `${UPSTREAM_MODEL_BASE_URL}${flatAssetPath}`;
+    const flatResponse = await fetch(upstreamUrl, { redirect: 'follow' });
+    if (flatResponse.ok) {
+      return proxyResponse(req, res, flatAssetPath, flatResponse);
+    }
+  }
+
+  return proxyResponse(req, res, assetPath, upstreamResponse);
+}
+
+async function proxyResponse(req, res, assetPath, upstreamResponse) {
   const headers = {
+    ...BASE_HEADERS,
     'Cache-Control': upstreamResponse.headers.get('cache-control') || 'public, max-age=300',
     'Content-Type': upstreamResponse.headers.get('content-type') || contentTypeFor(assetPath),
   };
@@ -119,6 +148,13 @@ const server = createServer(async (req, res) => {
     }
 
     const { pathname } = new URL(req.url, 'http://127.0.0.1');
+
+    if (isLocalRuntimeAsset(pathname)) {
+      const localRuntimePath = resolveStaticPath(pathname);
+      if (localRuntimePath && await serveFile(req, res, localRuntimePath)) {
+        return;
+      }
+    }
 
     if (pathname.startsWith('/models/')) {
       const proxied = await proxyModel(req, res, pathname);

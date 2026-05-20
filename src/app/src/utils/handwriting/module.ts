@@ -1,4 +1,4 @@
-import { InferenceSession, Tensor } from 'onnxruntime-web';
+import { InferenceSession, Tensor, env as ortEnv } from 'onnxruntime-web';
 import {
   CnnTrainingRuntime,
   type CnnTrainingRuntimeLike,
@@ -11,6 +11,7 @@ import {
   createAcceptedSampleRecord,
   createDefaultBaselineManifest,
   createExportBundle,
+  createInitialTrainingState,
   createPersistedState,
   decideTrainingTrigger,
   estimatePersistedStateBytes,
@@ -33,6 +34,7 @@ import type {
   AcceptedSampleInput,
   AcceptedSampleRecord,
   BaselineArtifactManifest,
+  CnnTrainingProgress,
   CnnTrainingArtifactUrls,
   CnnTrainingRuntimeUrls,
   DevSyncQueueItem,
@@ -62,9 +64,15 @@ const STORAGE_KEYS = {
   legacyClassifierSnapshot: 'classifierSnapshot',
 };
 
-const AUTO_ACCEPT_SCORE = 0.92;
-const AUTO_ACCEPT_MARGIN = 0.12;
 const DEFAULT_SNAPSHOT_BUDGET_BYTES = 2_000_000;
+
+function configureOrtInferenceRuntime(): void {
+  if (!ortEnv.wasm) {
+    return;
+  }
+  ortEnv.wasm.proxy = false;
+  ortEnv.wasm.numThreads = 1;
+}
 
 interface ResolvedConfig {
   modelBaseUrl: string;
@@ -270,6 +278,10 @@ export class BrowserHandwritingModule {
     const baseline = await this.loadBaseline(fallbackBaseline, config.baselineManifestUrl);
     this.baseline = baseline;
     this.cnnTrainer = config.cnnTrainingRuntime ?? new CnnTrainingRuntime(baseline);
+    const cnnAvailability = this.cnnTrainer.getAvailability?.() ?? {
+      available: this.cnnTrainer.isAvailable(),
+      reasons: this.cnnTrainer.isAvailable() ? [] : ['CNN training runtime is unavailable'],
+    };
 
     const incoming = await this.readPersistedPieces();
     const persisted = sanitizeImportedState(incoming, baseline, config.snapshotBudgetBytes);
@@ -284,8 +296,8 @@ export class BrowserHandwritingModule {
       trainerStatus: {
         ...persisted.trainingState.trainerStatus,
         activeModelGeneration: persisted.trainingState.personalizationGeneration,
-        cnnTrainingAvailable: baseline.cnn.supportsTraining && this.cnnTrainer.isAvailable(),
-        cnnTrainingStatus: baseline.cnn.supportsTraining && this.cnnTrainer.isAvailable() ? 'ready' : 'unavailable',
+        cnnTrainingAvailable: cnnAvailability.available,
+        cnnTrainingStatus: cnnAvailability.available ? 'ready' : 'unavailable',
         cnnInferenceSource: persisted.personalizedCnn?.inferenceModel ? 'personalized' : 'baseline',
         personalizedCnnAvailable: Boolean(persisted.personalizedCnn?.inferenceModel),
       },
@@ -363,6 +375,7 @@ export class BrowserHandwritingModule {
     progress: number,
     message: string,
     generation = this.getTrainingState().personalizationGeneration,
+    details?: CnnTrainingProgress | { reasons: string[] },
   ) {
     this.emit({
       type: 'training-progress',
@@ -372,6 +385,7 @@ export class BrowserHandwritingModule {
         progress,
         message,
         generation,
+        details,
         trainingState: this.getTrainingState(),
       },
     });
@@ -479,6 +493,7 @@ export class BrowserHandwritingModule {
     }
 
     try {
+      configureOrtInferenceRuntime();
       this.cnnSession = this.personalizedCnn?.inferenceModel
         ? await InferenceSession.create(this.personalizedCnn.inferenceModel)
         : (baseline.cnn.inferenceUrl ? await InferenceSession.create(baseline.cnn.inferenceUrl) : null);
@@ -620,18 +635,34 @@ export class BrowserHandwritingModule {
     }
 
     const candidates = toCandidatesFromProbabilities(weighted, 'ensemble').slice(0, 3);
-    const bestScore = candidates[0]?.score ?? 0;
-    const secondScore = candidates[1]?.score ?? 0;
-    const bestLabel = candidates[0]?.char ?? null;
-    const agreementCount = engines
-      .filter((engine) => engine.available && engine.topLabel === bestLabel)
-      .length;
-    const autoAccepted = (
-      Boolean(bestLabel) &&
-      bestScore >= AUTO_ACCEPT_SCORE &&
-      bestScore - secondScore >= AUTO_ACCEPT_MARGIN &&
-      agreementCount >= Math.min(2, engines.filter((engine) => engine.available).length)
+    
+    const knn = engines.find((e) => e.key === 'knn');
+    const feature = engines.find((e) => e.key === 'feature-classifier');
+    const cnn = engines.find((e) => e.key === 'cnn');
+
+    const cnnLabel = cnn?.topLabel;
+    const cnnScore = cnn?.topScore ?? 0;
+    const cnnAvailable = cnn?.available ?? false;
+
+    const knnAgrees = knn?.available && knn.topLabel === cnnLabel;
+    const knnScore = knn?.topScore ?? 0;
+    
+    const featureAgrees = feature?.available && feature.topLabel === cnnLabel;
+    const featureScore = feature?.topScore ?? 0;
+
+    const pass95 = cnnAvailable && cnnScore > 0.95 && (
+      (knnAgrees && knnScore > 0.50) ||
+      (featureAgrees && featureScore > 0.50)
     );
+
+    const pass80 = cnnAvailable && cnnScore > 0.80 && (
+      (knnAgrees && knnScore > 0.80) ||
+      (featureAgrees && featureScore > 0.80)
+    );
+
+    const autoAccepted = pass95 || pass80;
+    const bestLabel = autoAccepted ? cnnLabel! : (candidates[0]?.char ?? null);
+    const bestScore = autoAccepted ? cnnScore : (candidates[0]?.score ?? 0);
 
     const prediction: HandwritingPrediction = {
       status: autoAccepted ? 'confirmed' : 'uncertain',
@@ -777,13 +808,17 @@ export class BrowserHandwritingModule {
   }
 
   private async runTraining(reason: TrainingTriggerReason, milestoneReached: number | null): Promise<void> {
+    const cnnAvailability = this.cnnTrainer?.getAvailability?.() ?? {
+      available: Boolean(this.cnnTrainer?.isAvailable()),
+      reasons: this.cnnTrainer?.isAvailable() ? [] : ['CNN training runtime is unavailable'],
+    };
     this.trainingState = {
       ...this.getTrainingState(),
       lastTrainingReason: reason,
       trainerStatus: {
         ...this.getTrainingState().trainerStatus,
         trainingInFlight: true,
-        cnnTrainingStatus: this.cnnTrainer?.isAvailable() ? 'training' : 'unavailable',
+        cnnTrainingStatus: cnnAvailability.available ? 'training' : 'unavailable',
         lastEventAt: Date.now(),
       },
     };
@@ -801,183 +836,148 @@ export class BrowserHandwritingModule {
     const baseMilestones = milestoneReached !== null
       ? [...new Set([...this.trainingState.milestonesCompleted, milestoneReached])].sort((left, right) => left - right)
       : this.trainingState.milestonesCompleted;
+    const nextGeneration = this.getTrainingState().personalizationGeneration + 1;
 
-    if (dataset.training.length === 0 || dataset.readyLetters.length < 2) {
+    const rejectTraining = async (phase: 'feature' | 'cnn' | 'finalizing', reasonText: string, message: string, trainerStatusPatch: Partial<TrainingState['trainerStatus']> = {}): Promise<void> => {
       this.trainingState = {
         ...this.getTrainingState(),
         milestonesCompleted: baseMilestones,
+        pendingUserInputtedSinceTraining: 0,
         lastTrainingOutcome: 'rejected',
-        lastRejectedReason: 'Not enough balanced per-letter coverage yet.',
-        lastCandidateRejectionReason: 'Not enough balanced per-letter coverage yet.',
+        lastRejectedReason: reasonText,
+        lastCandidateRejectionReason: reasonText,
         trainerStatus: {
           ...this.getTrainingState().trainerStatus,
           trainingInFlight: false,
+          ...trainerStatusPatch,
           lastEventAt: Date.now(),
         },
       };
       await this.persist();
-      this.emitTrainingProgress('feature', 'rejected', 100, 'rejected: not enough balanced coverage');
+      this.emitTrainingProgress(phase, 'rejected', 100, message, this.getTrainingState().personalizationGeneration);
+      this.emitTrainingProgress('finalizing', 'rejected', 100, message, this.getTrainingState().personalizationGeneration);
       this.emit({
         type: 'training-rejected',
         payload: {
-          reason: 'Not enough balanced per-letter coverage yet.',
+          reason: reasonText,
           trainingState: this.getTrainingState(),
         },
       });
+    };
+
+    if (dataset.training.length === 0 || dataset.readyLetters.length < 2) {
+      await rejectTraining('feature', 'Not enough balanced per-letter coverage yet.', 'rejected: not enough balanced coverage');
       return;
     }
 
     const candidate = trainFeatureClassifier(dataset.training, reason, dataset.readyLetters);
     if (!candidate) {
-      this.trainingState = {
-        ...this.getTrainingState(),
-        milestonesCompleted: baseMilestones,
-        lastTrainingOutcome: 'rejected',
-        lastRejectedReason: 'Could not build a feature-classifier snapshot.',
-        lastCandidateRejectionReason: 'Could not build a feature-classifier snapshot.',
-        trainerStatus: {
-          ...this.getTrainingState().trainerStatus,
-          trainingInFlight: false,
-          lastEventAt: Date.now(),
-        },
-      };
-      await this.persist();
-      this.emitTrainingProgress('feature', 'rejected', 100, 'rejected: could not build feature snapshot');
-      this.emit({
-        type: 'training-rejected',
-        payload: {
-          reason: 'Could not build a feature-classifier snapshot.',
-          trainingState: this.getTrainingState(),
-        },
-      });
+      await rejectTraining('feature', 'Could not build a feature-classifier snapshot.', 'rejected: could not build feature snapshot');
       return;
     }
 
     candidate.metrics = evaluateSnapshot(candidate, dataset.holdout);
-    const nextGeneration = this.getTrainingState().personalizationGeneration + 1;
-    this.emitTrainingProgress('feature', 'ready', 45, `svm/feature ready! v${nextGeneration}`, nextGeneration);
     const currentMetrics = this.classifierSnapshot?.metrics ?? this.trainingState.latestMetrics;
-    let cnnCandidate: CnnTrainingRuntimeResult | null = null;
-    if (this.cnnTrainer?.isAvailable()) {
-      this.emitTrainingProgress('cnn', 'running', 60, 'cnn training...', nextGeneration);
-      cnnCandidate = await this.cnnTrainer.trainCandidate(dataset.training, dataset.holdout, this.personalizedCnn);
-      if (!cnnCandidate.accepted || !cnnCandidate.artifacts) {
-        const rejectionReason = cnnCandidate.rejectionReason ?? 'CNN training rejected the candidate.';
-        this.trainingState = {
-          ...this.getTrainingState(),
-          milestonesCompleted: baseMilestones,
-          lastTrainingOutcome: 'rejected',
-          lastRejectedReason: rejectionReason,
-          lastCandidateRejectionReason: rejectionReason,
-          trainerStatus: {
-            ...this.getTrainingState().trainerStatus,
-            trainingInFlight: false,
-            cnnTrainingStatus: 'rejected',
-            cnnTrainingStage: cnnCandidate.stage,
-            lastEventAt: Date.now(),
-          },
-        };
-        await this.persist();
-        this.emitTrainingProgress('cnn', 'rejected', 100, `rejected: ${rejectionReason}`, this.getTrainingState().personalizationGeneration);
-        this.emit({
-          type: 'training-rejected',
-          payload: {
-            reason: rejectionReason,
-            trainingState: this.getTrainingState(),
-          },
-        });
-        return;
-      }
-
-      const currentCnnMetrics = this.personalizedCnn?.metrics ?? null;
-      if (!shouldAcceptCandidateSnapshot(currentCnnMetrics, cnnCandidate.metrics)) {
-        this.trainingState = {
-          ...this.getTrainingState(),
-          milestonesCompleted: baseMilestones,
-          lastTrainingOutcome: 'rejected',
-          lastRejectedReason: 'CNN regression gate rejected the paired candidate.',
-          lastCandidateRejectionReason: 'CNN regression gate rejected the paired candidate.',
-          trainerStatus: {
-            ...this.getTrainingState().trainerStatus,
-            trainingInFlight: false,
-            cnnTrainingStatus: 'rejected',
-            cnnTrainingStage: cnnCandidate.stage,
-            lastEventAt: Date.now(),
-          },
-        };
-        await this.persist();
-        this.emitTrainingProgress('cnn', 'rejected', 100, 'rejected: CNN regression gate', this.getTrainingState().personalizationGeneration);
-        this.emit({
-          type: 'training-rejected',
-          payload: {
-            reason: 'CNN regression gate rejected the paired candidate.',
-            trainingState: this.getTrainingState(),
-          },
-        });
-        return;
-      }
-      this.emitTrainingProgress('cnn', 'ready', 85, `cnn ready! v${nextGeneration}`, nextGeneration);
+    const featureAccepted = shouldAcceptCandidateSnapshot(currentMetrics, candidate.metrics);
+    const featureRejectionReason = 'Regression gate rejected the candidate snapshot.';
+    if (featureAccepted) {
+      this.emitTrainingProgress('feature', 'ready', 45, `svm/feature ready! v${nextGeneration}`, nextGeneration);
     } else {
-      this.emitTrainingProgress('cnn', 'skipped', 60, 'cnn skipped', nextGeneration);
+      this.emitTrainingProgress('feature', 'rejected', 45, 'rejected: feature regression gate', nextGeneration);
     }
 
-    if (!shouldAcceptCandidateSnapshot(currentMetrics, candidate.metrics)) {
-      this.trainingState = {
-        ...this.getTrainingState(),
-        milestonesCompleted: baseMilestones,
-        latestMetrics: currentMetrics,
-        lastTrainingOutcome: 'rejected',
-        lastRejectedReason: 'Regression gate rejected the candidate snapshot.',
-        lastCandidateRejectionReason: 'Regression gate rejected the candidate snapshot.',
-        trainerStatus: {
-          ...this.getTrainingState().trainerStatus,
-          trainingInFlight: false,
-          cnnTrainingStatus: cnnCandidate ? 'rejected' : this.getTrainingState().trainerStatus.cnnTrainingStatus,
-          cnnTrainingStage: cnnCandidate?.stage ?? this.getTrainingState().trainerStatus.cnnTrainingStage,
-          lastEventAt: Date.now(),
-        },
-      };
-      await this.persist();
-      this.emitTrainingProgress('feature', 'rejected', 100, 'rejected: feature regression gate', this.getTrainingState().personalizationGeneration);
-      this.emit({
-        type: 'training-rejected',
-        payload: {
-          reason: 'Regression gate rejected the candidate snapshot.',
-          trainingState: this.getTrainingState(),
+    let cnnCandidate: CnnTrainingRuntimeResult | null = null;
+    let cnnAccepted = false;
+    let cnnRejectedReason: string | null = null;
+    if (this.cnnTrainer && cnnAvailability.available) {
+      this.emitTrainingProgress('cnn', 'running', 60, 'cnn training...', nextGeneration);
+      cnnCandidate = await this.cnnTrainer.trainCandidate(dataset.training, dataset.holdout, this.personalizedCnn, {
+        onProgress: (progress) => {
+          const mappedProgress = 60 + progress.progress * 25;
+          this.emitTrainingProgress(
+            'cnn',
+            progress.step === 'ready' ? 'ready' : 'running',
+            mappedProgress,
+            progress.message,
+            nextGeneration,
+            progress,
+          );
         },
       });
+      if (!cnnCandidate.accepted || !cnnCandidate.artifacts) {
+        cnnRejectedReason = cnnCandidate.rejectionReason ?? 'CNN training rejected the candidate.';
+        this.emitTrainingProgress('cnn', 'rejected', 85, `rejected: ${cnnRejectedReason}`, nextGeneration);
+      } else {
+        const currentCnnMetrics = this.personalizedCnn?.metrics ?? null;
+        if (!shouldAcceptCandidateSnapshot(currentCnnMetrics, cnnCandidate.metrics)) {
+          cnnRejectedReason = 'CNN regression gate rejected the candidate.';
+          this.emitTrainingProgress('cnn', 'rejected', 85, 'rejected: CNN regression gate', nextGeneration);
+        } else {
+          cnnAccepted = true;
+          this.emitTrainingProgress('cnn', 'ready', 85, `cnn ready! v${nextGeneration}`, nextGeneration);
+        }
+      }
+    } else {
+      const reasons = cnnAvailability.reasons.length > 0
+        ? cnnAvailability.reasons
+        : ['CNN training runtime is unavailable'];
+      this.emitTrainingProgress(
+        'cnn',
+        'skipped',
+        60,
+        `cnn unavailable: ${reasons[0]}`,
+        nextGeneration,
+        { reasons },
+      );
+    }
+
+    if (!featureAccepted && !cnnAccepted) {
+      const reasonText = featureRejectionReason ?? cnnRejectedReason ?? 'Training did not produce an acceptable personalized model.';
+      await rejectTraining(
+        cnnRejectedReason ? 'cnn' : 'feature',
+        reasonText,
+        cnnRejectedReason ? `rejected: ${cnnRejectedReason}` : 'rejected: feature regression gate',
+        {
+          cnnTrainingStatus: cnnAvailability.available ? 'rejected' : this.getTrainingState().trainerStatus.cnnTrainingStatus,
+          cnnTrainingStage: cnnCandidate?.stage ?? this.getTrainingState().trainerStatus.cnnTrainingStage,
+        },
+      );
       return;
     }
 
     const prospectiveTrainingState = {
       ...this.getTrainingState(),
       milestonesCompleted: baseMilestones,
-      latestSnapshotId: candidate.id,
+      latestSnapshotId: featureAccepted ? candidate.id : this.getTrainingState().latestSnapshotId,
       personalizationGeneration: this.getTrainingState().personalizationGeneration + 1,
       lastCompletedTrainingAt: Date.now(),
       lastTrainingReason: reason,
       lastTrainingOutcome: 'accepted' as const,
       lastRejectedReason: null,
       lastCandidateRejectionReason: null,
-      latestMetrics: candidate.metrics,
+      latestMetrics: featureAccepted ? candidate.metrics : currentMetrics,
       pendingUserInputtedSinceTraining: 0,
-      personalizedCohortLabelMap: candidate.labelMap,
+      personalizedCohortLabelMap: featureAccepted ? candidate.labelMap : this.getTrainingState().personalizedCohortLabelMap,
       trainerStatus: {
         ...this.getTrainingState().trainerStatus,
         trainingInFlight: false,
         activeModelGeneration: this.getTrainingState().personalizationGeneration + 1,
-        cnnTrainingStatus: cnnCandidate ? 'accepted' : this.getTrainingState().trainerStatus.cnnTrainingStatus,
+        cnnTrainingStatus: cnnAccepted
+          ? 'accepted'
+          : cnnAvailability.available
+            ? 'rejected'
+            : this.getTrainingState().trainerStatus.cnnTrainingStatus,
         cnnTrainingStage: cnnCandidate?.stage ?? this.getTrainingState().trainerStatus.cnnTrainingStage,
-        cnnInferenceSource: cnnCandidate?.artifacts?.inferenceModel ? 'personalized' : this.getTrainingState().trainerStatus.cnnInferenceSource,
-        personalizedCnnAvailable: Boolean(cnnCandidate?.artifacts?.inferenceModel ?? this.personalizedCnn?.inferenceModel),
+        cnnInferenceSource: cnnAccepted && cnnCandidate?.artifacts?.inferenceModel ? 'personalized' : this.getTrainingState().trainerStatus.cnnInferenceSource,
+        personalizedCnnAvailable: Boolean((cnnAccepted ? cnnCandidate?.artifacts?.inferenceModel : null) ?? this.personalizedCnn?.inferenceModel),
         lastEventAt: Date.now(),
       },
     };
     const prospectiveBytes = estimatePersistedStateBytes(createPersistedState(
       this.baseline!,
       this.ledger,
-      candidate,
-      cnnCandidate?.artifacts ?? this.personalizedCnn,
+      featureAccepted ? candidate : this.classifierSnapshot,
+      cnnAccepted ? (cnnCandidate?.artifacts ?? this.personalizedCnn) : this.personalizedCnn,
       prospectiveTrainingState,
       this.devSyncQueue,
     ));
@@ -985,6 +985,7 @@ export class BrowserHandwritingModule {
       this.trainingState = {
         ...this.getTrainingState(),
         milestonesCompleted: baseMilestones,
+        pendingUserInputtedSinceTraining: 0,
         lastTrainingOutcome: 'rejected',
         lastRejectedReason: 'Personalized snapshot exceeds the configured budget.',
         lastCandidateRejectionReason: 'Personalized snapshot exceeds the configured budget.',
@@ -997,7 +998,11 @@ export class BrowserHandwritingModule {
         trainerStatus: {
           ...this.getTrainingState().trainerStatus,
           trainingInFlight: false,
-          cnnTrainingStatus: cnnCandidate ? 'rejected' : this.getTrainingState().trainerStatus.cnnTrainingStatus,
+          cnnTrainingStatus: cnnAccepted
+            ? 'accepted'
+            : cnnAvailability.available
+              ? 'rejected'
+              : this.getTrainingState().trainerStatus.cnnTrainingStatus,
           cnnTrainingStage: cnnCandidate?.stage ?? this.getTrainingState().trainerStatus.cnnTrainingStage,
           lastEventAt: Date.now(),
         },
@@ -1014,8 +1019,10 @@ export class BrowserHandwritingModule {
       return;
     }
 
-    this.classifierSnapshot = candidate;
-    if (cnnCandidate?.artifacts) {
+    if (featureAccepted) {
+      this.classifierSnapshot = candidate;
+    }
+    if (cnnAccepted && cnnCandidate?.artifacts) {
       this.personalizedCnn = cnnCandidate.artifacts;
       this.cnnSession = null;
       this.cnnSessionKey = null;
@@ -1032,10 +1039,32 @@ export class BrowserHandwritingModule {
     this.emit({
       type: 'training-completed',
       payload: {
-        snapshot: candidate,
+        snapshot: featureAccepted ? candidate : this.classifierSnapshot,
         trainingState: this.getTrainingState(),
       },
     });
+    this.emit({
+      type: 'artifacts-updated',
+      payload: {
+        trainingState: this.getTrainingState(),
+      },
+    });
+  }
+
+  async clearPersonalizedModels(): Promise<void> {
+    await this.ensureInitialized();
+    const { baseline } = this.getResolvedState();
+    
+    this.classifierSnapshot = null;
+    this.personalizedCnn = null;
+    this.ledger = [];
+    this.devSyncQueue = [];
+    this.trainingState = createInitialTrainingState(baseline, this.getTrainingState().snapshotBudgetBytes);
+    this.cnnSession = null;
+    this.cnnSessionKey = null;
+
+    await this.persist();
+    
     this.emit({
       type: 'artifacts-updated',
       payload: {

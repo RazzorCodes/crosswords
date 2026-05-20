@@ -4,9 +4,15 @@ import os
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 from pathlib import Path
+from urllib.request import urlopen
 
-import torch
+try:
+    import torch
+except ImportError:
+    torch = None
 
 from cnn_model import get_cnn_model
 
@@ -15,6 +21,7 @@ LABEL_MAP = [chr(ord("A") + index) for index in range(26)]
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MODELS_DIR = PROJECT_ROOT / "models"
 ML_ROOT = Path(__file__).resolve().parent
+DEFAULT_ORT_WEB_VERSION = "1.26.0"
 
 
 def _asset_url(base_url: str, name: str) -> str:
@@ -23,6 +30,12 @@ def _asset_url(base_url: str, name: str) -> str:
 
 def export_baseline_onnx(models_dir: Path) -> Path:
     models_dir.mkdir(parents=True, exist_ok=True)
+    if torch is None:
+        onnx_path = models_dir / "cnn.onnx"
+        if onnx_path.exists():
+            return onnx_path
+        raise RuntimeError("torch is required to export baseline ONNX, but it is not installed.")
+
     model = get_cnn_model(num_classes=len(LABEL_MAP))
     weights_path = models_dir / "cnn_model.pth"
     if weights_path.exists():
@@ -78,6 +91,8 @@ def generate_training_artifacts(models_dir: Path, baseline_onnx: Path) -> dict[s
         "conv1.bias",
         "conv2.weight",
         "conv2.bias",
+        "conv3.weight",
+        "conv3.bias",
     ]
 
     artifacts.generate_artifacts(
@@ -120,38 +135,79 @@ def generate_training_artifacts(models_dir: Path, baseline_onnx: Path) -> dict[s
     return {"supported": True}
 
 
+def _first_existing(runtime_dir: Path, names: list[str]) -> Path | None:
+    for name in names:
+        path = runtime_dir / name
+        if path.is_file():
+            return path
+    return None
+
+
+def download_ort_web_runtime(version: str) -> Path:
+    package_url = f"https://registry.npmjs.org/onnxruntime-web/-/onnxruntime-web-{version}.tgz"
+    work_dir = Path(tempfile.mkdtemp(prefix="ort-web-"))
+    archive_path = work_dir / "onnxruntime-web.tgz"
+    print(f"Downloading ORT Web runtime {version} from {package_url}", flush=True)
+    with urlopen(package_url, timeout=120) as response:
+        archive_path.write_bytes(response.read())
+    with tarfile.open(archive_path, "r:gz") as archive:
+        for member in archive.getmembers():
+            target = (work_dir / member.name).resolve()
+            if not str(target).startswith(f"{work_dir.resolve()}{os.sep}"):
+                raise RuntimeError(f"Unsafe path in onnxruntime-web archive: {member.name}")
+        archive.extractall(work_dir)
+    runtime_dir = work_dir / "package" / "dist"
+    if not runtime_dir.is_dir():
+        raise RuntimeError(f"Downloaded onnxruntime-web package did not contain dist/: {runtime_dir}")
+    return runtime_dir
+
+
 def copy_required_web_training_runtime(runtime_dir: Path, models_dir: Path) -> None:
-    required = [
-        "ort-training-web.mjs",
-        "ort-wasm-simd.wasm",
-        "ort-wasm-simd-threaded.wasm",
-    ]
-    missing = [name for name in required if not (runtime_dir / name).is_file()]
+    # Target name -> list of source candidates
+    required = {
+        "ort-training-web.mjs": [
+            "ort-training-web.mjs",
+            "ort.training.wasm.mjs",
+        ],
+        "ort-wasm-simd.wasm": [
+            "ort-training-wasm-simd.wasm",
+            "ort-wasm-simd.wasm",
+        ],
+        "ort-wasm-simd-threaded.wasm": [
+            "ort-training-wasm-simd-threaded.wasm",
+            "ort-wasm-simd-threaded.wasm",
+        ],
+    }
+    resolved = {
+        target: _first_existing(runtime_dir, candidates)
+        for target, candidates in required.items()
+    }
+    missing = [target for target, source in resolved.items() if source is None]
     if missing:
+        # List available files to help debugging
+        available = [p.name for p in runtime_dir.glob("*") if p.is_file()]
         raise RuntimeError(
-            "Missing ORT Web training runtime assets in "
-            f"{runtime_dir}: {', '.join(missing)}. "
-            "Build ONNX Runtime Web with training APIs and place the files there."
+            f"Missing ORT Web training runtime assets in {runtime_dir}: {', '.join(missing)}. "
+            f"Available files: {', '.join(available)}"
         )
 
     target_dir = models_dir / "ort-training"
     target_dir.mkdir(parents=True, exist_ok=True)
-    for name in required:
-        source = runtime_dir / name
+    for name, source in resolved.items():
+        if source is None:
+            continue
         target = target_dir / name
-        if source.resolve() != target.resolve():
-            shutil.copy2(source, target)
+        shutil.copy2(source, target)
         os.chmod(target, 0o644)
 
 
 def try_copy_web_training_runtime(runtime_dir_text: str, models_dir: Path, require_training: bool) -> bool:
-    if not runtime_dir_text:
-        if require_training:
-            raise RuntimeError("--ort-web-runtime-dir is required when --require-training is set.")
-        print("ORT Web training runtime directory not configured; CNN browser training will be disabled.")
-        return False
+    runtime_dir = (
+        Path(runtime_dir_text).expanduser().resolve()
+        if runtime_dir_text
+        else download_ort_web_runtime(os.getenv("ORT_WEB_VERSION", DEFAULT_ORT_WEB_VERSION))
+    )
 
-    runtime_dir = Path(runtime_dir_text).expanduser().resolve()
     try:
         copy_required_web_training_runtime(runtime_dir, models_dir)
         return True
@@ -204,8 +260,10 @@ def main() -> None:
     parser.add_argument("--train-baseline", action="store_true")
     parser.add_argument("--require-training", action="store_true")
     parser.add_argument("--ort-web-runtime-dir", default=os.getenv("ORT_WEB_RUNTIME_DIR", ""))
+    parser.add_argument("--ort-web-version", default=os.getenv("ORT_WEB_VERSION", DEFAULT_ORT_WEB_VERSION))
     args = parser.parse_args()
 
+    os.environ["ORT_WEB_VERSION"] = args.ort_web_version
     models_dir = Path(args.models_dir).expanduser().resolve()
     if args.train_baseline:
         train_local_baselines(models_dir)
