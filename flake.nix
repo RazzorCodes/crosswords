@@ -18,6 +18,13 @@
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             nodejs_20
+            cargo
+            rustc
+            rustfmt
+            clippy
+            wasm-pack
+            wasm-bindgen-cli
+            binaryen
             (python3.withPackages (ps: with ps; [
               numpy
               scikit-learn
@@ -26,7 +33,7 @@
           ];
           shellHook = ''
             export PYTHONPATH=$PYTHONPATH:$(pwd)/src/ml:$(pwd)/src/srv
-            echo "Crosswords dev shell loaded (Node.js + lightweight Python)."
+            echo "Crosswords dev shell loaded (Node.js, Rust/WASM, lightweight Python)."
             echo "CNN/ONNX training remains container-based; the shell intentionally avoids torch-bin."
           '';
         };

@@ -1,11 +1,8 @@
 import { useGameStore } from '../store/useGameStore';
-import {
-  TeacherQueueItem,
-  useHandwritingStore,
-} from '../store/useHandwritingStore';
-import { deleteSample, submitSample } from './api';
-import { knnRecognizer } from './recognizers/knn';
-import { StrokeInput } from './recognizers/types';
+import { useHandwritingStore } from '../store/useHandwritingStore';
+import { handwritingModule } from './handwriting';
+import type { SampleAcceptance } from './handwriting';
+import type { StrokeInput } from './recognizers/types';
 
 const PENDING_WINDOW_MS = 2000;
 const pendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -18,61 +15,46 @@ function now() {
   return Date.now();
 }
 
-function createQueueItem(sampleId: string, label: string, source: string): TeacherQueueItem {
-  return {
-    localId: sampleId,
-    sampleId,
-    label,
-    source,
-    createdAt: now(),
-  };
+function getPendingInk(cell: string) {
+  return useHandwritingStore.getState().pendingInk.find((entry) => entry.cellKey === cell) ?? null;
 }
 
-async function submitQueuedHighQualitySample(
+async function recordImplicitSample(
+  cell: string,
   label: string,
   strokes: StrokeInput,
   source: string,
 ): Promise<void> {
-  const response = await submitSample({
-    label,
-    strokes,
-    storedAs: 'high_quality',
-    source,
-    mode: 'train',
-  });
-  if (!response) {
-    return;
-  }
-
-  knnRecognizer.addExample(strokes, label, response.id);
-  useHandwritingStore.getState().addQueueItem(createQueueItem(response.id, label, source));
-}
-
-async function submitRegularSample(cell: string, label: string, strokes: StrokeInput, source: string) {
   const grid = useGameStore.getState().grid;
   const [xText, yText] = cell.split(':');
   const x = Number(xText);
   const y = Number(yText);
   const current = grid?.cells[y]?.[x]?.userInput ?? '';
 
-  if (current !== label) {
-    useHandwritingStore.getState().clearPendingInk(cell);
-    return;
-  }
-
-  const response = await submitSample({
-    label,
-    strokes,
-    storedAs: 'regular',
-    source,
-    mode: 'play',
-  });
-  
-  if (response) {
-    knnRecognizer.addExample(strokes, label, response.id);
+  if (current === label) {
+    await handwritingModule.recordAcceptedSample({
+      label,
+      strokes,
+      acceptance: 'implicit',
+      source,
+    });
   }
 
   useHandwritingStore.getState().clearPendingInk(cell);
+}
+
+async function recordAcceptedSample(
+  label: string,
+  strokes: StrokeInput,
+  source: string,
+  acceptance: SampleAcceptance,
+): Promise<void> {
+  await handwritingModule.recordAcceptedSample({
+    label,
+    strokes,
+    acceptance,
+    source,
+  });
 }
 
 export function cancelPendingSubmission(cell: string) {
@@ -98,12 +80,13 @@ export function finalizeHandwritingSample(args: {
   label: string;
   strokes: StrokeInput;
   source: string;
+  acceptance?: SampleAcceptance;
 }) {
   const cell = cellKey(args.x, args.y);
   cancelPendingSubmission(cell);
 
-  if (useHandwritingStore.getState().trainMode) {
-    void submitQueuedHighQualitySample(args.label, args.strokes, args.source);
+  if (args.acceptance === 'user_inputted') {
+    void recordAcceptedSample(args.label, args.strokes, args.source, 'user_inputted');
     return;
   }
 
@@ -113,27 +96,27 @@ export function finalizeHandwritingSample(args: {
     label: args.label,
     source: args.source,
     expiresAt,
+    strokes: args.strokes,
   });
 
   const timer = setTimeout(() => {
     pendingTimers.delete(cell);
-    void submitRegularSample(cell, args.label, args.strokes, args.source);
+    void recordImplicitSample(cell, args.label, args.strokes, args.source);
   }, PENDING_WINDOW_MS);
   pendingTimers.set(cell, timer);
 }
 
-export async function deleteTeacherQueueItem(localId: string) {
-  const store = useHandwritingStore.getState();
-  const item = store.queueItems.find((entry) => entry.localId === localId);
-  if (!item) {
+export function acceptPendingCorrection(args: {
+  x: number;
+  y: number;
+  label: string;
+  source: string;
+}) {
+  const cell = cellKey(args.x, args.y);
+  const pending = getPendingInk(cell);
+  cancelPendingSubmission(cell);
+  if (!pending) {
     return;
   }
-
-  const deleted = await deleteSample(item.sampleId);
-  if (!deleted) {
-    return;
-  }
-
-  store.removeQueueItem(localId);
-  knnRecognizer.removeExample(item.sampleId);
+  void recordAcceptedSample(args.label, pending.strokes, args.source, 'user_inputted');
 }

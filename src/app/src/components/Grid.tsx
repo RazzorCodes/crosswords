@@ -2,7 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useGameStore } from '../store/useGameStore';
-import { cancelPendingSubmission, finalizeHandwritingSample } from '../utils/handwritingSession';
+import {
+  acceptPendingCorrection,
+  cancelPendingSubmission,
+  finalizeHandwritingSample,
+} from '../utils/handwritingSession';
 import { getWordAt, isWordPlacementCorrect } from '../utils/validation';
 import { CellComponent } from './Cell';
 import { DrawingCanvas } from './DrawingCanvas';
@@ -87,12 +91,18 @@ export function GridComponent() {
           label: value,
           strokes: currentSuggestion.strokes,
           source: 'keyboard-correction',
+          acceptance: 'user_inputted',
         });
         return;
       }
 
-      cancelPendingSubmission(key);
       updateCellInput(x, y, value);
+      acceptPendingCorrection({
+        x,
+        y,
+        label: value,
+        source: 'manual-entry',
+      });
       return;
     }
 

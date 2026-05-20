@@ -85,6 +85,7 @@ export function DrawingCanvas() {
           label: result.chosenChar,
           strokes,
           source: 'auto-accept',
+          acceptance: 'implicit',
         });
         return;
       }

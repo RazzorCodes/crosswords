@@ -58,6 +58,7 @@ function SuggestionBubbleItem({ suggestion }: { suggestion: any }) {
                   label: candidate.char,
                   strokes,
                   source: 'suggestion-bubble',
+                  acceptance: 'user_inputted',
                 });
               }}
               title={`${candidate.char} (${Math.round(candidate.score * 100)}% via ${candidate.source})`}
