@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { GridData, WordPlacement } from '../types';
 import { EngineResult, RecognitionCandidate, StrokeInput } from '../utils/recognizers/types';
 import { getWordAt, isWordPlacementCorrect } from '../utils/validation';
+import type { HandwritingModuleEventMap } from '../utils/handwriting/types';
 
 interface SuggestionState {
   cell: { x: number; y: number };
@@ -17,6 +18,16 @@ interface ToastMessage {
   engines: EngineResult[];
 }
 
+export interface TrainingToastMessage {
+  id: string;
+  generation: number;
+  progress: number;
+  feature: string;
+  cnn: string;
+  finalizing: string | null;
+  status: 'running' | 'ready' | 'skipped' | 'rejected';
+}
+
 interface GameState {
   language: 'en' | 'ro';
   showGlow: boolean;
@@ -26,6 +37,7 @@ interface GameState {
   isGestureActive: boolean;
   suggestions: SuggestionState[];
   toasts: ToastMessage[];
+  trainingToast: TrainingToastMessage | null;
   mostNeededLetter: string | null;
   showLeftPanel: boolean;
   activeHint: WordPlacement | null;
@@ -45,6 +57,8 @@ interface GameState {
   clearAllSuggestions: () => void;
   addToast: (char: string, confidence: number, engines: EngineResult[]) => void;
   removeToast: (id: string) => void;
+  updateTrainingToast: (progress: HandwritingModuleEventMap['training-progress']) => void;
+  removeTrainingToast: () => void;
   setMostNeededLetter: (letter: string | null) => void;
   setShowLeftPanel: (show: boolean) => void;
   setActiveHint: (hint: WordPlacement | null) => void;
@@ -62,6 +76,7 @@ export const useGameStore = create<GameState>((set) => ({
   isGestureActive: false,
   suggestions: [],
   toasts: [],
+  trainingToast: null,
   mostNeededLetter: null,
   showLeftPanel: true,
   activeHint: null,
@@ -128,6 +143,32 @@ export const useGameStore = create<GameState>((set) => ({
   removeToast: (id) => set((state) => ({
     toasts: state.toasts.filter((t) => t.id !== id),
   })),
+  updateTrainingToast: (progress) => set((state) => {
+    const current = state.trainingToast?.generation === progress.generation ? state.trainingToast : {
+      id: 'training-progress',
+      generation: progress.generation,
+      progress: 0,
+      feature: 'svm/feature waiting',
+      cnn: 'cnn waiting',
+      finalizing: null,
+      status: 'running' as const,
+    };
+    const next: TrainingToastMessage = {
+      ...current,
+      generation: progress.generation,
+      progress: Math.max(current.progress, progress.progress),
+      status: progress.status,
+    };
+    if (progress.phase === 'feature') {
+      next.feature = progress.message;
+    } else if (progress.phase === 'cnn') {
+      next.cnn = progress.message;
+    } else {
+      next.finalizing = progress.message;
+    }
+    return { trainingToast: next };
+  }),
+  removeTrainingToast: () => set({ trainingToast: null }),
   setMostNeededLetter: (mostNeededLetter) => set({ mostNeededLetter }),
   setShowLeftPanel: (showLeftPanel) => set({ showLeftPanel }),
   setActiveHint: (activeHint) => set({ activeHint }),

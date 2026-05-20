@@ -16,6 +16,8 @@ node_modules
 dist
 dist-ssr
 *.local
+rust/*/target
+*.wasm
 
 # secrets
 .env-secret
@@ -46,3 +48,6 @@ tesseract-core*.js
 
 # Runtime data
 dataset/
+
+# Scratchpads
+plan

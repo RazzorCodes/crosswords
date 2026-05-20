@@ -1,4 +1,5 @@
 import { useHandwritingStore } from '../store/useHandwritingStore';
+import { resolveAppMode } from '../utils/runtimeConfig';
 
 function formatPercent(value: number | null | undefined) {
   if (value === null || value === undefined || Number.isNaN(value)) {
@@ -17,19 +18,35 @@ function formatTime(timestamp: number | null) {
   });
 }
 
-export function HandwritingPanel() {
-  const { trainMode, trainingState, moduleReady, lastEvent } = useHandwritingStore();
+interface HandwritingPanelProps {
+  docked?: boolean;
+}
+
+export function HandwritingPanel({ docked = false }: HandwritingPanelProps) {
+  const {
+    trainMode,
+    trainingState,
+    moduleReady,
+    lastEvent,
+    diagnosticLogs,
+    lastPrediction,
+  } = useHandwritingStore();
+  const isDevMode = resolveAppMode() === 'dev';
 
   if (!trainMode) {
     return null;
   }
 
   return (
-    <aside className="absolute top-24 right-4 z-[90] w-80 rounded-2xl border border-amber-500/30 bg-slate-950/92 p-4 text-left shadow-2xl backdrop-blur-md">
+    <div className={`${docked ? 'h-full overflow-y-auto p-4' : `absolute top-24 right-4 z-[90] max-h-[calc(100%-8rem)] overflow-y-auto rounded-2xl border border-amber-500/30 bg-slate-950/92 p-4 text-left shadow-2xl backdrop-blur-md ${isDevMode ? 'w-[min(440px,calc(100%-2rem))]' : 'w-80'}`}`}>
       <div className="mb-3 flex items-center justify-between">
         <div>
-          <div className="text-[10px] font-black uppercase tracking-[0.25em] text-amber-400">Train Mode</div>
-          <h2 className="text-sm font-black text-white">Handwriting Trainer</h2>
+          <div className="text-[10px] font-black uppercase tracking-[0.25em] text-amber-400">
+            {isDevMode ? 'Dev Mode' : 'Train Mode'}
+          </div>
+          <h2 className="text-sm font-black text-white">
+            {isDevMode ? 'Recognition Diagnostics' : 'Handwriting Trainer'}
+          </h2>
         </div>
         <div className={`rounded-full border px-2 py-1 text-[10px] font-bold ${moduleReady ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200' : 'border-slate-700 bg-slate-900 text-slate-400'}`}>
           {moduleReady ? 'LOCAL READY' : 'INITIALIZING'}
@@ -102,13 +119,55 @@ export function HandwritingPanel() {
             </div>
             <div className="flex items-center justify-between">
               <span className="text-slate-500">CNN ready</span>
-              <span>{trainingState.trainerStatus.personalizedCnnAvailable ? 'personalized' : 'baseline'}</span>
+              <span>{trainingState.trainerStatus.cnnInferenceSource}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500">CNN train</span>
+              <span>{trainingState.trainerStatus.cnnTrainingStatus}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500">CNN stage</span>
+              <span>{trainingState.trainerStatus.cnnTrainingStage ?? 'none'}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-slate-500">Event</span>
               <span>{lastEvent ?? 'idle'}</span>
             </div>
           </div>
+
+          {isDevMode && (
+            <div className="rounded-xl border border-slate-800 bg-slate-900/80 px-3 py-3 text-xs text-slate-300">
+              <div className="mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Latest Detection</div>
+              {!lastPrediction ? (
+                <div className="text-slate-500">No prediction yet.</div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Top</span>
+                    <span className="font-black text-white">
+                      {lastPrediction.topLabel ?? '--'} {formatPercent(lastPrediction.confidence)}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {lastPrediction.candidates.slice(0, 3).map((candidate) => (
+                      <div key={`${candidate.char}-${candidate.source}`} className="rounded-lg border border-slate-800 bg-slate-950/70 px-2 py-2">
+                        <div className="text-base font-black text-white">{candidate.char}</div>
+                        <div className="text-[10px] text-slate-500">{formatPercent(candidate.score)}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="space-y-1 border-t border-slate-800 pt-2">
+                    {lastPrediction.engines.map((engine) => (
+                      <div key={engine.name} className="flex items-center justify-between">
+                        <span className="text-slate-500">{engine.name}</span>
+                        <span>{engine.char ?? '--'} {engine.score === null ? '' : formatPercent(engine.score)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="rounded-xl border border-slate-800 bg-slate-900/80 px-3 py-3 text-xs text-slate-300">
             <div className="mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Recent Samples</div>
@@ -131,8 +190,27 @@ export function HandwritingPanel() {
               ))}
             </div>
           </div>
+
+          {isDevMode && (
+            <div className="rounded-xl border border-slate-800 bg-slate-900/80 px-3 py-3 text-xs text-slate-300">
+              <div className="mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Event Log</div>
+              <div className="max-h-52 space-y-2 overflow-y-auto pr-1">
+                {diagnosticLogs.length === 0 ? (
+                  <div className="text-slate-500">No diagnostic events yet.</div>
+                ) : diagnosticLogs.map((entry) => (
+                  <div key={entry.id} className="rounded-lg border border-slate-800 bg-slate-950/70 px-2 py-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="truncate font-bold text-slate-100">{entry.summary}</span>
+                      <span className="shrink-0 text-[10px] text-slate-500">{formatTime(entry.createdAt)}</span>
+                    </div>
+                    <div className="mt-1 text-[10px] uppercase tracking-[0.16em] text-slate-600">{entry.type}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
-    </aside>
+    </div>
   );
 }

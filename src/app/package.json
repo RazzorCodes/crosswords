@@ -5,8 +5,12 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "wasm:build": "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_LINKER=wasm-ld cargo build --manifest-path ../../rust/handwriting_core/Cargo.toml --target wasm32-unknown-unknown --release && cp ../../rust/handwriting_core/target/wasm32-unknown-unknown/release/handwriting_core.wasm public/wasm/handwriting_core.wasm",
+    "predev": "npm run wasm:build",
     "dev": "vite",
+    "prebuild": "npm run wasm:build",
     "build": "tsc && vite build",
+    "test": "node --experimental-specifier-resolution=node --loader \"$(dirname $(which ts-node))/../lib/node_modules/ts-node/esm.mjs\" --test tests/handwriting.core.test.ts tests/handwriting.integration.test.ts",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"
   },

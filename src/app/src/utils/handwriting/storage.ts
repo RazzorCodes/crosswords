@@ -2,7 +2,7 @@ import type { KeyValueStore } from './types';
 
 const DB_NAME = 'crosswords-handwriting';
 const STORE_NAME = 'kv';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export class IndexedDbKeyValueStore implements KeyValueStore {
   private dbPromise: Promise<IDBDatabase> | null = null;

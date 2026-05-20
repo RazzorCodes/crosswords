@@ -1,3 +1,14 @@
+# WASM build stage
+FROM rust:1-slim AS wasm-builder
+WORKDIR /repo
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends lld \
+    && rm -rf /var/lib/apt/lists/* \
+    && rustup target add wasm32-unknown-unknown
+COPY rust/handwriting_core ./rust/handwriting_core
+RUN CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_LINKER=wasm-ld \
+    cargo build --manifest-path rust/handwriting_core/Cargo.toml --target wasm32-unknown-unknown --release
+
 # Build stage
 FROM node:20-slim AS builder
 WORKDIR /app
@@ -8,14 +19,19 @@ ENV VITE_TRAIN_MODE=${VITE_TRAIN_MODE}
 COPY src/app/package*.json ./
 RUN npm install
 COPY src/app/ .
+COPY --from=wasm-builder /repo/rust/handwriting_core/target/wasm32-unknown-unknown/release/handwriting_core.wasm public/wasm/handwriting_core.wasm
 RUN mkdir -p /models
-RUN npm run build
+RUN npx tsc && npx vite build
 
 # Runtime stage
 FROM node:20-slim
-RUN npm install -g serve
 WORKDIR /app
 COPY --from=builder /app/dist /app
-RUN chmod -R a+rX /app
+COPY src/app/release-server.mjs /server.mjs
+COPY src/app/entrypoint.sh /entrypoint.sh
+ENV APP_ROOT=/app
+RUN chmod -R a+rX /app \
+    && chmod +x /server.mjs \
+    && chmod +x /entrypoint.sh
 EXPOSE 80
-CMD ["serve", "-s", "/app", "-l", "80"]
+ENTRYPOINT ["/entrypoint.sh"]

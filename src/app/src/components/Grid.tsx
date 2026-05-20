@@ -13,12 +13,18 @@ import { DrawingCanvas } from './DrawingCanvas';
 import { HandwritingPanel } from './HandwritingPanel';
 import { SuggestionBubble } from './SuggestionBubble';
 import { SuggestionStrokes } from './SuggestionStrokes';
+import type { AppMode } from '../utils/runtimeConfig';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function GridComponent() {
+interface GridComponentProps {
+  appMode?: AppMode;
+}
+
+export function GridComponent({ appMode = 'release' }: GridComponentProps) {
+  const isDevMode = appMode === 'dev';
   const {
     grid,
     selectedCell,
@@ -215,9 +221,9 @@ export function GridComponent() {
         <DrawingCanvas />
       </div>
 
-      <HandwritingPanel />
+      {!isDevMode && <HandwritingPanel />}
 
-      {selectedClues.length > 0 && (
+      {selectedClues.length > 0 && !isDevMode && (
         <div className="absolute bottom-12 left-1/2 z-40 w-[90%] max-w-[600px] -translate-x-1/2 animate-in slide-in-from-bottom-4 duration-300 md:min-w-[400px] md:w-auto">
           <div className="flex flex-col gap-2 rounded-2xl border border-slate-700/50 bg-slate-900/90 p-4 shadow-2xl backdrop-blur-xl">
             {selectedClues.map((placement, index) => (
@@ -254,7 +260,7 @@ export function GridComponent() {
         </div>
       )}
 
-      {showLeftPanel && (
+      {showLeftPanel && !isDevMode && (
         <div className="pointer-events-auto absolute bottom-0 left-0 top-0 z-30 hidden w-64 overflow-y-auto border-r border-slate-800 bg-slate-900/90 p-4 backdrop-blur-md animate-in slide-in-from-left duration-300 md:block">
           <div className="flex flex-col gap-6 text-left">
             <div>
@@ -324,6 +330,7 @@ export function GridComponent() {
         </div>
       )}
 
+      {!isDevMode && (
       <div className="pointer-events-auto absolute bottom-0 left-0 right-0 z-30 max-h-48 overflow-y-auto border-t border-slate-800 bg-slate-900/90 p-4 backdrop-blur-md md:hidden">
         <div className="grid grid-cols-2 gap-4 text-left">
           <div>
@@ -360,6 +367,7 @@ export function GridComponent() {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

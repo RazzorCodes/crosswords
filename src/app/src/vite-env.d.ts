@@ -3,6 +3,7 @@
 interface ImportMetaEnv {
   readonly VITE_SRV_URL?: string;
   readonly VITE_TRAIN_MODE?: string;
+  readonly VITE_APP_MODE?: 'dev' | 'release';
 }
 
 interface ImportMeta {
@@ -12,6 +13,7 @@ interface ImportMeta {
 interface CrosswordsRuntimeConfig {
   MODEL_BASE_URL?: string;
   SRV_URL?: string;
+  APP_MODE?: 'dev' | 'release';
 }
 
 interface Window {

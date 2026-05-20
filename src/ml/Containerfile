@@ -1,7 +1,7 @@
 FROM python:3.11-slim
 WORKDIR /app
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch
-RUN pip install --no-cache-dir numpy scikit-learn pillow onnx onnxscript skl2onnx onnxconverter-common
+RUN pip install --no-cache-dir numpy scikit-learn pillow onnx onnxscript skl2onnx onnxconverter-common onnxruntime-training
 COPY src/ml /app/src/ml
 COPY src/srv/sample_store.py /app/src/ml/sample_store.py
 ENV DATA_ROOT=/data

@@ -82,6 +82,6 @@ jobs:
           tag_name: ${{ env.GIT_TAG }}
           name: Release ${{ env.VERSION }}
           files: |
-            /models/*.onnx
+            /models/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

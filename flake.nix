@@ -18,6 +18,7 @@
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             nodejs_20
+            nodePackages.ts-node
             cargo
             rustc
             rustfmt
@@ -25,6 +26,7 @@
             wasm-pack
             wasm-bindgen-cli
             binaryen
+            lld
             (python3.withPackages (ps: with ps; [
               numpy
               scikit-learn

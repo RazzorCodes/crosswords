@@ -6,13 +6,43 @@ services:
       dockerfile: src/app/Containerfile
       args:
         VITE_SRV_URL: http://localhost:8000
-        VITE_TRAIN_MODE: ${VITE_TRAIN_MODE:-false}
+        VITE_TRAIN_MODE: "true"
     ports:
       - "5173:80"
     volumes:
-      - models-data:/app/models:ro
+      - ./models:/app/models:ro
+    environment:
+      - APP_MODE=dev
+      - MODEL_BASE_URL=/models
+      - SRV_URL=http://localhost:8000
     depends_on:
-      - srv
+      srv:
+        condition: service_started
+      models-init:
+        condition: service_completed_successfully
+
+  models-init:
+    profiles: ["dev"]
+    build:
+      context: .
+      dockerfile: src/ml/Containerfile
+    volumes:
+      - ./models:/models
+      - ./models/ort-training:/ort-web-training:ro
+    environment:
+      - MODELS_DIR=/models
+    command:
+      - python
+      - src/ml/generate_handwriting_artifacts.py
+      - --models-dir
+      - /models
+      - --public-base-url
+      - /models
+      - --version
+      - dev
+      - --train-baseline
+      - --ort-web-runtime-dir
+      - /ort-web-training
 
   srv:
     profiles: ["dev"]
@@ -38,7 +68,7 @@ services:
       dockerfile: src/ml/Containerfile
     volumes:
       - ./data:/data:z
-      - models-data:/models
+      - ./models:/models
     environment:
       - DATA_ROOT=/data
       - MODELS_DIR=/models
@@ -55,12 +85,5 @@ services:
     ports:
       - "5173:80"
     environment:
+      - APP_MODE=release
       - MODEL_BASE_URL=${MODEL_BASE_URL:-https://github.com/RazzorCodes/crosswords/releases/latest/download}
-
-volumes:
-  models-data:
-    driver: local
-    driver_opts:
-      type: nfs
-      o: addr=nfs.lan,nolock,soft,rw
-      device: ":/slow/data/ml-models/handwriting/"

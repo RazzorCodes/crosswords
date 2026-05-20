@@ -6,7 +6,8 @@ from pathlib import Path
 
 from training_data import load_training_split
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ML_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = ML_ROOT.parent
 DEFAULT_MODELS_DIR = PROJECT_ROOT / "models"
 
 
@@ -34,7 +35,7 @@ def total_trainable_samples() -> int:
 
 def write_metrics(models_dir: Path) -> None:
     result = subprocess.run(
-        ["python", "evaluate_models.py"],
+        ["python", str(ML_ROOT / "evaluate_models.py")],
         check=False,
         capture_output=True,
         text=True,
@@ -63,8 +64,8 @@ def write_metrics(models_dir: Path) -> None:
 def run_trainers() -> None:
     models_dir = Path(os.getenv("MODELS_DIR", str(DEFAULT_MODELS_DIR))).expanduser()
     models_dir.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["python", "train_svm.py"], check=False)
-    subprocess.run(["python", "train_cnn.py"], check=False)
+    subprocess.run(["python", str(ML_ROOT / "train_svm.py")], check=False)
+    subprocess.run(["python", str(ML_ROOT / "train_cnn.py")], check=False)
     write_metrics(models_dir)
 
 

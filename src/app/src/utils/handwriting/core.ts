@@ -1,5 +1,15 @@
 import { extractFeatures } from '../recognizers/features';
 import type { RecognitionCandidate, StrokeInput } from '../recognizers/types';
+import {
+  buildBalancedDatasetRust,
+  computeLetterStatsRust,
+  evaluateSnapshotRust,
+  extractFeaturesRust,
+  isHandwritingRustCoreReady,
+  predictFeatureClassifierProbabilitiesRust,
+  predictKnnRust,
+  trainFeatureClassifierRust,
+} from './wasmCore';
 import type {
   AcceptedSampleInput,
   AcceptedSampleRecord,
@@ -13,6 +23,7 @@ import type {
   PersistedHandwritingState,
   PersonalizedCnnArtifacts,
   SampleAcceptance,
+  SerializedRustCoreState,
   SnapshotMetrics,
   TrainingState,
   TrainingTriggerDecision,
@@ -27,6 +38,14 @@ const HOLDOUT_FRACTION = 0.2;
 const OVERALL_TOLERANCE = 0.03;
 const IMPLICIT_TOLERANCE = 0.05;
 const RECENT_SAMPLE_LIMIT = 12;
+
+type LegacyPersistedHandwritingState = Partial<{
+  baseline: BaselineArtifactManifest;
+  ledger: AcceptedSampleRecord[];
+  classifierSnapshot: FeatureClassifierSnapshot | null;
+}>;
+
+type ImportablePersistedHandwritingState = Partial<PersistedHandwritingState> & LegacyPersistedHandwritingState;
 
 function randomId(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
@@ -58,7 +77,19 @@ export function createDefaultBaselineManifest(modelBaseUrl: string): BaselineArt
     cnn: {
       inferenceUrl: `${baseUrl}/cnn.onnx`,
       supportsTraining: false,
-      trainingArtifactsUrl: null,
+      trainingArtifacts: {
+        trainUrl: null,
+        evalUrl: null,
+        optimizerUrl: null,
+        checkpointUrl: null,
+        exportMetadataUrl: null,
+      },
+      trainingRuntime: {
+        moduleUrl: null,
+        wasmUrl: null,
+        simdWasmUrl: null,
+        threadedWasmUrl: null,
+      },
     },
     featureClassifier: null,
   };
@@ -78,6 +109,7 @@ export function createInitialTrainingState(
     nextMilestone: MILESTONES[0],
     pendingUserInputtedSinceTraining: 0,
     latestSnapshotId: null,
+    personalizationGeneration: 0,
     lastCompletedTrainingAt: null,
     lastTrainingReason: null,
     lastTrainingOutcome: 'idle',
@@ -85,11 +117,28 @@ export function createInitialTrainingState(
     latestMetrics: null,
     persistedBytes: 0,
     snapshotBudgetBytes,
+    personalizedCohortLabelMap: baseline.featureClassifier?.labelMap ?? [],
+    lastCandidateRejectionReason: null,
+    snapshotBudgetStatus: {
+      budgetBytes: snapshotBudgetBytes,
+      usedBytes: 0,
+      withinBudget: true,
+      lastRejectedBytes: null,
+    },
+    devSyncQueueStatus: {
+      pending: 0,
+      failed: 0,
+      lastFlushAt: null,
+    },
     recentAcceptedSamples: [],
     trainerStatus: {
       trainingInFlight: false,
       lastEventAt: null,
+      activeModelGeneration: 0,
       cnnTrainingAvailable: baseline.cnn.supportsTraining,
+      cnnTrainingStatus: baseline.cnn.supportsTraining ? 'ready' : 'unavailable',
+      cnnTrainingStage: null,
+      cnnInferenceSource: 'baseline',
       personalizedCnnAvailable: false,
     },
   };
@@ -109,7 +158,7 @@ export function createAcceptedSampleRecord(input: AcceptedSampleInput): Accepted
     acceptance: input.acceptance,
     source: input.source,
     createdAt: input.createdAt ?? Date.now(),
-    features: extractFeatures(input.strokes),
+    features: extractFeaturesFromStrokes(input.strokes),
   };
 }
 
@@ -135,6 +184,10 @@ export function predictKnnFromFeatures(
   k = 5,
   farNeighborDistance = 4.5,
 ): RecognitionCandidate[] {
+  if (isHandwritingRustCoreReady()) {
+    return predictKnnRust(features, cache, k, farNeighborDistance);
+  }
+
   if (cache.length === 0) {
     return [];
   }
@@ -186,6 +239,10 @@ export function trainFeatureClassifier(
   reason: TrainingTriggerReason,
   readyLetters: string[],
 ): FeatureClassifierSnapshot | null {
+  if (isHandwritingRustCoreReady()) {
+    return trainFeatureClassifierRust(samples, readyLetters, reason);
+  }
+
   if (samples.length === 0 || readyLetters.length < 2) {
     return null;
   }
@@ -236,6 +293,10 @@ export function predictFeatureClassifierProbabilities(
   snapshot: FeatureClassifierSnapshot | null,
   features: number[],
 ): Record<string, number> {
+  if (isHandwritingRustCoreReady()) {
+    return predictFeatureClassifierProbabilitiesRust(snapshot, features);
+  }
+
   const probabilities = Object.fromEntries(ALPHABET.map((label) => [label, 0])) as Record<string, number>;
 
   if (!snapshot || snapshot.centroids.length === 0) {
@@ -287,6 +348,10 @@ function selectHoldoutCount(count: number): number {
 }
 
 export function buildBalancedDataset(ledger: AcceptedSampleRecord[]): BalancedDataset {
+  if (isHandwritingRustCoreReady()) {
+    return buildBalancedDatasetRust(ledger);
+  }
+
   const byLetter = new Map<string, { user_inputted: AcceptedSampleRecord[]; implicit: AcceptedSampleRecord[] }>();
   for (const label of ALPHABET) {
     byLetter.set(label, { user_inputted: [], implicit: [] });
@@ -335,8 +400,12 @@ export function buildBalancedDataset(ledger: AcceptedSampleRecord[]): BalancedDa
     const userHoldoutCount = selectHoldoutCount(buckets.user_inputted.length);
     const implicitHoldoutCount = selectHoldoutCount(buckets.implicit.length);
 
-    const userHoldout = buckets.user_inputted.slice(-userHoldoutCount);
-    const implicitHoldout = buckets.implicit.slice(-implicitHoldoutCount);
+    const userHoldout = userHoldoutCount > 0
+      ? buckets.user_inputted.slice(-userHoldoutCount)
+      : [];
+    const implicitHoldout = implicitHoldoutCount > 0
+      ? buckets.implicit.slice(-implicitHoldoutCount)
+      : [];
     holdout.push(...userHoldout, ...implicitHoldout);
 
     const userPool = buckets.user_inputted.slice(0, buckets.user_inputted.length - userHoldoutCount);
@@ -386,6 +455,10 @@ export function evaluateSnapshot(
   snapshot: FeatureClassifierSnapshot | null,
   holdout: AcceptedSampleRecord[],
 ): SnapshotMetrics {
+  if (isHandwritingRustCoreReady()) {
+    return evaluateSnapshotRust(snapshot, holdout);
+  }
+
   const userInputted = holdout.filter((sample) => sample.acceptance === 'user_inputted');
   const implicit = holdout.filter((sample) => sample.acceptance === 'implicit');
   return {
@@ -411,6 +484,10 @@ export function shouldAcceptCandidateSnapshot(
 }
 
 export function computeCountsByLetter(ledger: AcceptedSampleRecord[]): Record<string, LetterAcceptanceCounts> {
+  if (isHandwritingRustCoreReady()) {
+    return computeLetterStatsRust(ledger).countsByLetter;
+  }
+
   const counts = createCountsByLetter();
   for (const sample of ledger) {
     if (!isLetterLabel(sample.label)) {
@@ -491,6 +568,7 @@ export function updateTrainingStateFromLedger(
   state: TrainingState,
   ledger: AcceptedSampleRecord[],
   personalizedCnn: PersonalizedCnnArtifacts | null,
+  devSyncQueueStatus = state.devSyncQueueStatus,
 ): TrainingState {
   const countsByLetter = computeCountsByLetter(ledger);
   const readyLetters = getReadyLettersFromCounts(countsByLetter);
@@ -513,12 +591,34 @@ export function updateTrainingStateFromLedger(
     totalAcceptedSamples: ledger.length,
     countsByLetter,
     readyLetters,
+    personalizedCohortLabelMap: state.personalizedCohortLabelMap ?? [],
+    lastCandidateRejectionReason: state.lastCandidateRejectionReason ?? state.lastRejectedReason,
+    devSyncQueueStatus,
     nextMilestone,
     recentAcceptedSamples,
     trainerStatus: {
       ...state.trainerStatus,
+      cnnInferenceSource: personalizedCnn?.inferenceModel ? 'personalized' : 'baseline',
       personalizedCnnAvailable: Boolean(personalizedCnn?.inferenceModel),
+      activeModelGeneration: state.personalizationGeneration,
     },
+  };
+}
+
+export function createSerializedCoreState(
+  baseline: BaselineArtifactManifest,
+  ledger: AcceptedSampleRecord[],
+  classifierSnapshot: FeatureClassifierSnapshot | null,
+  trainingState: TrainingState,
+): SerializedRustCoreState {
+  return {
+    version: 1,
+    baselineVersion: baseline.version,
+    ledger,
+    milestonesCompleted: trainingState.milestonesCompleted,
+    pendingUserInputtedSinceTraining: trainingState.pendingUserInputtedSinceTraining,
+    latestAcceptedFeatureClassifier: classifierSnapshot,
+    knnCache: rebuildKnnCache(ledger),
   };
 }
 
@@ -528,78 +628,127 @@ export function createPersistedState(
   classifierSnapshot: FeatureClassifierSnapshot | null,
   personalizedCnn: PersonalizedCnnArtifacts | null,
   trainingState: TrainingState,
+  devSyncQueue: PersistedHandwritingState['devSyncQueue'] = [],
 ): PersistedHandwritingState {
   return {
-    baseline,
-    ledger,
-    classifierSnapshot,
-    knnCache: rebuildKnnCache(ledger),
+    baselineManifest: baseline,
+    coreState: createSerializedCoreState(baseline, ledger, classifierSnapshot, trainingState),
     personalizedCnn,
     trainingState,
+    devSyncQueue,
   };
 }
 
 export function createExportBundle(state: PersistedHandwritingState): ExportedHandwritingBundle {
   return {
-    version: 1,
+    version: 2,
     exportedAt: Date.now(),
-    baseline: state.baseline,
-    ledger: state.ledger,
-    classifierSnapshot: state.classifierSnapshot,
-    knnCache: state.knnCache,
+    baselineManifest: state.baselineManifest,
+    coreState: state.coreState,
     personalizedCnn: state.personalizedCnn,
     trainingState: state.trainingState,
+    devSyncQueue: state.devSyncQueue,
   };
 }
 
-export function sanitizeImportedState(
-  incoming: Partial<PersistedHandwritingState> | null | undefined,
+function coerceIncomingBaseline(
+  incoming: ImportablePersistedHandwritingState | null | undefined,
   fallbackBaseline: BaselineArtifactManifest,
-  snapshotBudgetBytes: number,
-): PersistedHandwritingState {
-  const baseline = incoming?.baseline ?? fallbackBaseline;
-  const ledger = Array.isArray(incoming?.ledger)
-    ? incoming!.ledger.filter((sample): sample is AcceptedSampleRecord => (
+): BaselineArtifactManifest {
+  return incoming?.baselineManifest
+    ?? incoming?.baseline
+    ?? fallbackBaseline;
+}
+
+function coerceIncomingLedger(
+  incoming: ImportablePersistedHandwritingState | null | undefined,
+): AcceptedSampleRecord[] {
+  const maybeLedger = incoming?.coreState?.ledger
+    ?? incoming?.ledger
+    ?? [];
+  return Array.isArray(maybeLedger)
+    ? maybeLedger.filter((sample): sample is AcceptedSampleRecord => (
       sample != null
       && typeof sample.id === 'string'
       && typeof sample.label === 'string'
+      && /^[A-Z]$/.test(sample.label)
       && Array.isArray(sample.features)
+      && sample.features.length === 30
       && Array.isArray(sample.strokes)
       && (sample.acceptance === 'user_inputted' || sample.acceptance === 'implicit')
       && typeof sample.source === 'string'
       && typeof sample.createdAt === 'number'
     ))
     : [];
-  const classifierSnapshot = incoming?.classifierSnapshot ?? null;
+}
+
+function coerceIncomingSnapshot(
+  incoming: ImportablePersistedHandwritingState | null | undefined,
+): FeatureClassifierSnapshot | null {
+  return incoming?.coreState?.latestAcceptedFeatureClassifier
+    ?? incoming?.classifierSnapshot
+    ?? null;
+}
+
+export function sanitizeImportedState(
+  incoming: ImportablePersistedHandwritingState | null | undefined,
+  fallbackBaseline: BaselineArtifactManifest,
+  snapshotBudgetBytes: number,
+): PersistedHandwritingState {
+  const baseline = coerceIncomingBaseline(incoming, fallbackBaseline);
+  const ledger = coerceIncomingLedger(incoming);
+  const classifierSnapshot = coerceIncomingSnapshot(incoming);
   const personalizedCnn = incoming?.personalizedCnn ?? null;
+  const devSyncQueue = Array.isArray(incoming?.devSyncQueue) ? incoming.devSyncQueue : [];
   const baseState = createInitialTrainingState(baseline, snapshotBudgetBytes);
   const trainingState = updateTrainingStateFromLedger(
     {
       ...baseState,
       ...incoming?.trainingState,
       baselineVersion: baseline.version,
+      personalizationGeneration: incoming?.trainingState?.personalizationGeneration ?? baseState.personalizationGeneration,
       snapshotBudgetBytes,
+      personalizedCohortLabelMap: classifierSnapshot?.labelMap ?? incoming?.trainingState?.personalizedCohortLabelMap ?? [],
+      lastCandidateRejectionReason: incoming?.trainingState?.lastCandidateRejectionReason ?? incoming?.trainingState?.lastRejectedReason ?? null,
       trainerStatus: {
         ...baseState.trainerStatus,
         ...incoming?.trainingState?.trainerStatus,
         cnnTrainingAvailable: baseline.cnn.supportsTraining,
+        cnnTrainingStatus: baseline.cnn.supportsTraining
+          ? incoming?.trainingState?.trainerStatus?.cnnTrainingStatus ?? 'ready'
+          : 'unavailable',
+        cnnInferenceSource: personalizedCnn?.inferenceModel ? 'personalized' : 'baseline',
       },
     },
     ledger,
     personalizedCnn,
+    {
+      pending: devSyncQueue.length,
+      failed: devSyncQueue.filter((item) => item.lastError).length,
+      lastFlushAt: incoming?.trainingState?.devSyncQueueStatus?.lastFlushAt ?? null,
+    },
   );
-  const persisted = createPersistedState(baseline, ledger, classifierSnapshot, personalizedCnn, trainingState);
+  const persisted = createPersistedState(baseline, ledger, classifierSnapshot, personalizedCnn, trainingState, devSyncQueue);
   const persistedBytes = estimatePersistedStateBytes(persisted);
   return {
     ...persisted,
     trainingState: {
       ...persisted.trainingState,
       persistedBytes,
+      snapshotBudgetStatus: {
+        budgetBytes: snapshotBudgetBytes,
+        usedBytes: persistedBytes,
+        withinBudget: persistedBytes <= snapshotBudgetBytes,
+        lastRejectedBytes: incoming?.trainingState?.snapshotBudgetStatus?.lastRejectedBytes ?? null,
+      },
     },
   };
 }
 
 export function extractFeaturesFromStrokes(strokes: StrokeInput): number[] {
+  if (isHandwritingRustCoreReady()) {
+    return extractFeaturesRust(strokes);
+  }
   return extractFeatures(strokes);
 }
 
