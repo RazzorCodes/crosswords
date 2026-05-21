@@ -5,7 +5,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "wasm:build": "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_LINKER=wasm-ld cargo build --manifest-path ../core/Cargo.toml --target wasm32-unknown-unknown --release && cp ../core/target/wasm32-unknown-unknown/release/handwriting_core.wasm public/wasm/handwriting_core.wasm",
+    "wasm:build": "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_LINKER=wasm-ld cargo rustc --manifest-path ../core/Cargo.toml --target wasm32-unknown-unknown --release --lib --crate-type=cdylib && cp ../core/target/wasm32-unknown-unknown/release/handwriting_core.wasm public/wasm/handwriting_core.wasm",
     "predev": "npm run wasm:build",
     "dev": "vite",
     "prebuild": "npm run wasm:build",

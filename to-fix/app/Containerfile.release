@@ -7,7 +7,7 @@ RUN apt-get update \
     && rustup target add wasm32-unknown-unknown
 COPY src/core ./src/core
 RUN CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_LINKER=wasm-ld \
-    cargo build --manifest-path src/core/Cargo.toml --target wasm32-unknown-unknown --release
+    cargo rustc --manifest-path src/core/Cargo.toml --target wasm32-unknown-unknown --release --lib --crate-type=cdylib
 
 # Build stage
 FROM node:20-slim AS builder

@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use burn::backend::{Autodiff, NdArray, Wgpu};
+use burn::backend::{Autodiff, NdArray};
+#[cfg(feature = "gpu")]
+use burn::backend::Wgpu;
 use burn::module::AutodiffModule;
 use burn::nn::loss::CrossEntropyLossConfig;
 use burn::optim::{AdamConfig, GradientsParams, Optimizer};
@@ -91,17 +93,6 @@ pub fn balanced_split(samples: Vec<DualSample>, seed: u64) -> Result<BalancedSpl
         validation,
         per_label_count: min_count,
     })
-}
-
-fn iter_batches<B: Backend>(
-    samples: &[DualSample],
-    batch_size: usize,
-    device: &B::Device,
-) -> Result<Vec<CnnBatch<B>>, String> {
-    samples
-        .chunks(batch_size.max(1))
-        .map(|chunk| batch_dual(chunk, device))
-        .collect()
 }
 
 fn train_batch<B: AutodiffBackend>(
@@ -217,14 +208,34 @@ pub fn train_cnn_from_file(
             &Default::default(),
         )
     } else {
-        train_cnn_with_backend::<Autodiff<Wgpu<f32, i32>>>(
-            split,
-            model_out,
-            config_out,
-            options,
-            &burn::backend::wgpu::WgpuDevice::default(),
-        )
+        train_cnn_with_gpu_backend(split, model_out, config_out, options)
     }
+}
+
+#[cfg(feature = "gpu")]
+fn train_cnn_with_gpu_backend(
+    split: BalancedSplit,
+    model_out: &Path,
+    config_out: &Path,
+    options: TrainCnnOptions,
+) -> Result<CnnModelMetadata, String> {
+    train_cnn_with_backend::<Autodiff<Wgpu<f32, i32>>>(
+        split,
+        model_out,
+        config_out,
+        options,
+        &burn::backend::wgpu::WgpuDevice::default(),
+    )
+}
+
+#[cfg(not(feature = "gpu"))]
+fn train_cnn_with_gpu_backend(
+    _split: BalancedSplit,
+    _model_out: &Path,
+    _config_out: &Path,
+    _options: TrainCnnOptions,
+) -> Result<CnnModelMetadata, String> {
+    Err("GPU training requires building with `--features gpu`; pass `--cpu` for the default local build".to_string())
 }
 
 pub fn save_safetensors<B: Backend>(model: &PicoDualCnn<B>, path: &Path) -> Result<(), String> {

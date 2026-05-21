@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "datasets:build": "node scripts/copy-datasets.mjs",
-    "wasm:build": "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_LINKER=wasm-ld cargo build --manifest-path ../Cargo.toml --target wasm32-unknown-unknown --release && mkdir -p public/wasm && cp ../target/wasm32-unknown-unknown/release/handwriting_core.wasm public/wasm/handwriting_core.wasm",
+    "wasm:build": "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_LINKER=wasm-ld cargo rustc --manifest-path ../Cargo.toml --target wasm32-unknown-unknown --release --lib --crate-type=cdylib && mkdir -p public/wasm && cp ../target/wasm32-unknown-unknown/release/handwriting_core.wasm public/wasm/handwriting_core.wasm",
     "predev": "npm run datasets:build && npm run wasm:build",
     "dev": "vite",
     "prebuild": "npm run datasets:build && npm run wasm:build",
