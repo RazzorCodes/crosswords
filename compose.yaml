@@ -28,8 +28,13 @@ services:
       dockerfile: src/core/ui/Containerfile
     ports:
       - "5174:80"
+    volumes:
+      - browser-model-runtime:/app/models:ro
     environment:
       - APP_MODE=core-lab
+    depends_on:
+      models-init:
+        condition: service_completed_successfully
 
   models-init:
     profiles: ["dev"]

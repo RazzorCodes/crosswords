@@ -86,7 +86,7 @@ export function getCnnAvailability(manifest: BaselineManifest | null): CnnAvaila
   if (!manifest) {
     reasons.push('baseline manifest is unavailable');
   } else {
-    if (!manifest.cnn.supportsTraining) reasons.push('manifest disables CNN training');
+    if (!manifest.cnn.supportsTraining) reasons.push('baseline CNN inference is available, but this manifest has no browser training artifacts');
     if (!manifest.cnn.trainingRuntime.moduleUrl) reasons.push('missing ORT Web training module');
     if (!manifest.cnn.trainingArtifacts.trainUrl) reasons.push('missing CNN training model');
     if (!manifest.cnn.trainingArtifacts.evalUrl) reasons.push('missing CNN eval model');

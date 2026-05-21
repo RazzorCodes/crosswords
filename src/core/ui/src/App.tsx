@@ -3,12 +3,17 @@ import { ALPHABET, type DatasetManifest, type LabRecognitionResult, type LabSamp
 import { normalizeLabel } from './lib/canvas';
 import { getCnnAvailability, loadBaselineManifest, trainCnn, type CnnTrainingProgress } from './lib/cnnAdapter';
 import { loadDatasetManifest, loadDatasetSamples, mergeDatasetSamples } from './lib/datasets';
-import { countByLetter, computeSvmMetrics, readyLetters } from './lib/metrics';
+import { countByLetter, readyLetters } from './lib/metrics';
 import { emptyLabState, estimateJsonBytes, loadLabState, resetLabState, saveLabState } from './lib/storage';
 import { recognizeLabStrokes } from './lib/recognition';
-import { extractFeatures, initWasmCore, trainSvm } from './lib/wasmCore';
+import { extractFeatures, initWasmCore } from './lib/wasmCore';
 
 type Status = 'idle' | 'busy' | 'ready' | 'error';
+
+type SvmWorkerResponse =
+  | { type: 'progress'; message: string; progress: number }
+  | { type: 'completed'; snapshot: LabState['svmSnapshot']; rejectionReason: string | null; elapsedMs: number }
+  | { type: 'failed'; reason: string };
 
 function formatMs(value: number | undefined): string {
   return value === undefined ? '-' : `${value.toFixed(1)} ms`;
@@ -98,6 +103,7 @@ export function App() {
   const [result, setResult] = useState<LabRecognitionResult | null>(null);
   const [dump, setDump] = useState('');
   const [cnnProgress, setCnnProgress] = useState<CnnTrainingProgress | null>(null);
+  const [svmProgress, setSvmProgress] = useState<{ progress: number; message: string } | null>(null);
   const [datasetManifest, setDatasetManifest] = useState<DatasetManifest>({ version: 'loading', datasets: [] });
   const [selectedDatasets, setSelectedDatasets] = useState<string[]>([]);
 
@@ -169,16 +175,55 @@ export function App() {
     setMessage(`added ${normalized}`);
   };
 
-  const runTrainSvm = () => {
-    const trained = trainSvm(state.ledger, ready);
-    if (!trained) {
+  const runTrainSvm = async () => {
+    if (ready.length < 2) {
       setMessage('SVM rejected: need at least two ready letters with two samples each');
       return;
     }
-    const metrics = computeSvmMetrics(trained, state.ledger);
-    const snapshot = { ...trained, metrics };
-    setState((current) => ({ ...current, svmSnapshot: snapshot, latestMetrics: metrics }));
-    setMessage(`SVM trained on ${snapshot.datasetSize} samples`);
+    setStatus('busy');
+    setSvmProgress({ progress: 1, message: `queued ${state.ledger.length} samples` });
+    setMessage(`starting SVM worker for ${state.ledger.length} samples`);
+    const wasmUrl = new URL('wasm/handwriting_core.wasm', new URL(import.meta.env.BASE_URL, window.location.origin)).toString();
+    const worker = new Worker(new URL('./lib/svmTrainingWorker.ts', import.meta.url), { type: 'module' });
+    try {
+      const snapshot = await new Promise<LabState['svmSnapshot']>((resolve, reject) => {
+        worker.onmessage = (event: MessageEvent<SvmWorkerResponse>) => {
+          if (event.data.type === 'progress') {
+            setSvmProgress({ progress: event.data.progress, message: event.data.message });
+            setMessage(event.data.message);
+            return;
+          }
+          if (event.data.type === 'failed') {
+            reject(new Error(event.data.reason));
+            return;
+          }
+          if (!event.data.snapshot) {
+            reject(new Error(event.data.rejectionReason ?? 'SVM training rejected'));
+            return;
+          }
+          resolve(event.data.snapshot);
+        };
+        worker.onerror = (event) => {
+          reject(new Error(event.message || 'SVM worker failed'));
+        };
+        worker.postMessage({
+          type: 'train',
+          ledger: state.ledger,
+          readyLetters: ready,
+          wasmUrl,
+        });
+      });
+      setState((current) => ({ ...current, svmSnapshot: snapshot, latestMetrics: snapshot?.metrics ?? current.latestMetrics }));
+      setStatus('ready');
+      setSvmProgress({ progress: 100, message: 'SVM training complete' });
+      setMessage(`SVM trained on ${snapshot?.datasetSize ?? 0} samples`);
+    } catch (error) {
+      setStatus('error');
+      setSvmProgress(null);
+      setMessage(error instanceof Error ? error.message : 'SVM training failed');
+    } finally {
+      worker.terminate();
+    }
   };
 
   const runTrainCnn = async () => {
@@ -283,7 +328,7 @@ export function App() {
         </div>
 
         <div className="controls">
-          <button onClick={runTrainSvm}>Train SVM</button>
+          <button onClick={() => void runTrainSvm()} disabled={status === 'busy'}>Train SVM</button>
           <button onClick={runTrainCnn} disabled={status === 'busy'}>Train CNN</button>
           <button onClick={dumpSvm}>Dump SVM</button>
           <button onClick={dumpCnn}>Dump CNN</button>
@@ -358,6 +403,7 @@ export function App() {
           <div className="letter-grid">
             {ALPHABET.map((item) => <span key={item} className={counts[item] >= 2 ? 'ready-letter' : ''}>{item}:{counts[item]}</span>)}
           </div>
+          {svmProgress && <p className="muted">SVM {svmProgress.message} / {Math.round(svmProgress.progress)}%</p>}
           {cnnProgress && <p className="muted">{cnnProgress.message} / {Math.round(cnnProgress.progress * 100)}%</p>}
           {!cnnAvailability.available && <p className="muted">{cnnAvailability.reasons.join('; ')}</p>}
         </div>

@@ -53,11 +53,11 @@ def split_high_quality_samples(samples: list[dict[str, Any]]) -> tuple[list[dict
 def load_training_split() -> dict[str, Any]:
     snapshot = load_snapshot(include_legacy=False)
     high_quality_train, high_quality_eval = split_high_quality_samples(snapshot.usable_high_quality)
-    # CNN now only trains on "very refined data" (high quality)
-    train_samples = high_quality_train
+    train_samples = snapshot.usable_regular + high_quality_train
     return {
         "snapshot": snapshot,
         "train_samples": train_samples,
+        "regular_train": snapshot.usable_regular,
         "high_quality_train": high_quality_train,
         "high_quality_eval": high_quality_eval,
     }

@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -28,7 +29,88 @@ def _asset_url(base_url: str, name: str) -> str:
     return f"{base_url.rstrip('/')}/{name}"
 
 
-def export_baseline_onnx(models_dir: Path) -> Path:
+def _checkpoint_is_compatible(model, state_dict) -> tuple[bool, str | None]:
+    if not isinstance(state_dict, dict):
+        return False, "checkpoint is not a state dict"
+
+    expected = model.state_dict()
+    expected_keys = set(expected)
+    actual_keys = set(state_dict)
+    missing = sorted(expected_keys - actual_keys)
+    extra = sorted(actual_keys - expected_keys)
+    if missing or extra:
+        details = []
+        if missing:
+            details.append(f"missing keys: {', '.join(missing[:3])}")
+        if extra:
+            details.append(f"unexpected keys: {', '.join(extra[:3])}")
+        return False, "; ".join(details)
+
+    for key, expected_value in expected.items():
+        actual_value = state_dict[key]
+        if not hasattr(actual_value, "shape"):
+            return False, f"{key} is not a tensor"
+        if tuple(actual_value.shape) != tuple(expected_value.shape):
+            return False, (
+                f"{key} shape {tuple(actual_value.shape)} does not match "
+                f"{tuple(expected_value.shape)}"
+            )
+
+    return True, None
+
+
+def _load_torch_state_dict(path: Path):
+    try:
+        return torch.load(path, map_location="cpu", weights_only=True)
+    except TypeError:
+        return torch.load(path, map_location="cpu")
+
+
+def _backup_incompatible_checkpoint(weights_path: Path, reason: str) -> None:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    backup_path = weights_path.with_name(f"{weights_path.stem}.incompatible-{timestamp}{weights_path.suffix}")
+    weights_path.rename(backup_path)
+    print(
+        f"Ignoring incompatible CNN checkpoint {weights_path.name}: {reason}. "
+        f"Moved it to {backup_path.name}.",
+        flush=True,
+    )
+
+
+def _load_compatible_checkpoint(model, weights_path: Path) -> bool:
+    if not weights_path.exists():
+        return False
+
+    try:
+        state_dict = _load_torch_state_dict(weights_path)
+    except Exception as exc:
+        _backup_incompatible_checkpoint(weights_path, f"could not load checkpoint: {exc}")
+        return False
+
+    compatible, reason = _checkpoint_is_compatible(model, state_dict)
+    if not compatible:
+        _backup_incompatible_checkpoint(weights_path, reason or "unknown incompatibility")
+        return False
+
+    model.load_state_dict(state_dict)
+    return True
+
+
+def train_local_cnn_baseline(models_dir: Path) -> None:
+    env = {
+        **os.environ,
+        "MODELS_DIR": str(models_dir),
+    }
+    result = subprocess.run(
+        [sys.executable, str(ML_ROOT / "train_cnn.py")],
+        env=env,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"train_cnn.py failed with exit code {result.returncode}")
+
+
+def export_baseline_onnx(models_dir: Path, retrain_if_needed: bool = False) -> Path:
     models_dir.mkdir(parents=True, exist_ok=True)
     if torch is None:
         onnx_path = models_dir / "cnn.onnx"
@@ -38,8 +120,12 @@ def export_baseline_onnx(models_dir: Path) -> Path:
 
     model = get_cnn_model(num_classes=len(LABEL_MAP))
     weights_path = models_dir / "cnn_model.pth"
-    if weights_path.exists():
-        model.load_state_dict(torch.load(weights_path, map_location="cpu"))
+    if not _load_compatible_checkpoint(model, weights_path) and retrain_if_needed:
+        print("Training a fresh CNN baseline for browser artifact export.", flush=True)
+        train_local_cnn_baseline(models_dir)
+        model = get_cnn_model(num_classes=len(LABEL_MAP))
+        if not _load_compatible_checkpoint(model, weights_path):
+            raise RuntimeError("CNN baseline training did not produce a compatible cnn_model.pth.")
     model.eval()
 
     onnx_path = models_dir / "cnn.onnx"
@@ -267,7 +353,7 @@ def main() -> None:
     models_dir = Path(args.models_dir).expanduser().resolve()
     if args.train_baseline:
         train_local_baselines(models_dir)
-    baseline_onnx = export_baseline_onnx(models_dir)
+    baseline_onnx = export_baseline_onnx(models_dir, retrain_if_needed=args.require_training)
     result = {"supported": False} if args.skip_training else generate_training_artifacts(models_dir, baseline_onnx)
     if args.require_training and not result["supported"]:
         raise RuntimeError("ORT training artifact generation is required but unavailable.")
