@@ -1,12 +1,16 @@
+{
+"dataset-0001" :
+[
 // format datapoint
 {
   "sample_id":"<source>-<uuid:4>", // legacy-0000
   "sample_label" : "<label>", // A, B, C, ...
-  "extra_labels" : ["extra-label1", ... ] // legacy, inputed, implicit, 
+  "extra_labels" : ["extra-label1", ... ] // legacy, inputed, implicit, annotated, auto, human
   "strokes" : [
     {"x": coord_x, "y": coord_y, "t": timestamp},
     ...
   ]
 }
-
-
+...
+]
+}
