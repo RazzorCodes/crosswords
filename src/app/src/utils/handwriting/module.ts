@@ -213,7 +213,7 @@ function mergeFeatureProbabilities(
   features: number[],
 ): Record<string, number> {
   const baselineProbs = predictFeatureClassifierProbabilities(baseline, features);
-  if (!personalized || personalized.centroids.length === 0) {
+  if (!personalized || (personalized.centroids.length === 0 && !personalized.svm)) {
     return baselineProbs;
   }
 

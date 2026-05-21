@@ -1,0 +1,32 @@
+FROM rust:1-slim AS wasm-builder
+WORKDIR /repo
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends lld \
+    && rm -rf /var/lib/apt/lists/* \
+    && rustup target add wasm32-unknown-unknown
+COPY src/core ./src/core
+RUN CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_LINKER=wasm-ld \
+    cargo build --manifest-path src/core/Cargo.toml --target wasm32-unknown-unknown --release
+
+FROM node:20-slim AS builder
+WORKDIR /repo
+COPY src/core/ui/package*.json ./src/core/ui/
+RUN npm install --prefix src/core/ui
+COPY src/core/ui ./src/core/ui
+COPY data/regular ./data/regular
+COPY data/high_quality ./data/high_quality
+COPY --from=wasm-builder /repo/src/core/target/wasm32-unknown-unknown/release/handwriting_core.wasm ./src/core/ui/public/wasm/handwriting_core.wasm
+RUN npm --prefix src/core/ui run datasets:build \
+    && cd src/core/ui \
+    && npx tsc \
+    && npx vite build
+
+FROM node:20-slim
+WORKDIR /app
+COPY --from=builder /repo/src/core/ui/dist /app
+COPY src/core/ui/server.mjs /server.mjs
+ENV APP_ROOT=/app
+RUN chmod -R a+rX /app \
+    && chmod +x /server.mjs
+EXPOSE 80
+CMD ["node", "/server.mjs"]

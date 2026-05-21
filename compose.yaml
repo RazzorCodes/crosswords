@@ -21,6 +21,16 @@ services:
       models-init:
         condition: service_completed_successfully
 
+  core-lab:
+    profiles: ["dev"]
+    build:
+      context: .
+      dockerfile: src/core/ui/Containerfile
+    ports:
+      - "5174:80"
+    environment:
+      - APP_MODE=core-lab
+
   models-init:
     profiles: ["dev"]
     build:

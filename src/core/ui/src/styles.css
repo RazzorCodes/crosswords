@@ -1,0 +1,284 @@
+:root {
+  color: #18201f;
+  background: #f4f1e8;
+  font-family: "Aptos", "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    linear-gradient(135deg, rgba(31, 87, 91, 0.12), transparent 35%),
+    linear-gradient(315deg, rgba(157, 53, 45, 0.10), transparent 34%),
+    #f4f1e8;
+}
+
+button,
+select,
+input {
+  border: 1px solid #273331;
+  border-radius: 6px;
+  background: #fffdf6;
+  color: #18201f;
+  font: inherit;
+  min-height: 38px;
+}
+
+button {
+  cursor: pointer;
+  padding: 0 12px;
+  font-weight: 700;
+}
+
+button:hover:not(:disabled) {
+  background: #d7ece8;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.shell {
+  width: min(1500px, 100%);
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.toolbar,
+.workbench,
+.lower-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.toolbar {
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  border-bottom: 3px solid #18201f;
+  padding-bottom: 16px;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(28px, 4vw, 54px);
+  line-height: 0.95;
+}
+
+h2 {
+  font-size: 17px;
+  text-transform: uppercase;
+}
+
+.toolbar p,
+.muted {
+  color: #58615f;
+}
+
+.toolbar-actions,
+.controls,
+.label-row,
+.aggregate {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workbench {
+  grid-template-columns: minmax(280px, 380px) minmax(280px, 1fr) minmax(260px, 420px);
+  margin-top: 18px;
+  align-items: start;
+}
+
+.ink-panel,
+.panel {
+  border: 2px solid #18201f;
+  background: rgba(255, 253, 246, 0.82);
+  padding: 12px;
+  border-radius: 8px;
+}
+
+.drawing-pad {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  height: auto;
+  touch-action: none;
+  background: #fffef9;
+  border: 2px solid #18201f;
+  border-radius: 6px;
+}
+
+.label-row {
+  margin-top: 10px;
+}
+
+.label-row select,
+.label-row input {
+  flex: 1;
+  min-width: 90px;
+  padding: 0 10px;
+  font-weight: 800;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.metric {
+  min-height: 84px;
+  border: 2px solid #314b49;
+  border-radius: 8px;
+  background: #e8efe8;
+  padding: 10px;
+  display: grid;
+  align-content: space-between;
+}
+
+.metric span {
+  color: #52605d;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.metric strong {
+  font-size: 24px;
+}
+
+.controls {
+  align-content: start;
+}
+
+.controls button {
+  flex: 1 1 130px;
+}
+
+.lower-grid {
+  grid-template-columns: 0.95fr 1.1fr 0.9fr 1fr;
+  margin-top: 16px;
+}
+
+.dataset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.dataset-actions button {
+  flex: 1 1 100px;
+}
+
+.dataset-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.dataset-row {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  border: 1px solid #b6c2bd;
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: #fffdf6;
+}
+
+.dataset-row input {
+  min-height: auto;
+}
+
+.dataset-row em {
+  color: #58615f;
+  font-style: normal;
+  font-size: 12px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+
+th,
+td {
+  border-bottom: 1px solid #bec8c2;
+  padding: 8px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.aggregate {
+  margin-top: 10px;
+}
+
+.aggregate span,
+.letter-grid span {
+  border: 1px solid #9aa8a3;
+  border-radius: 6px;
+  padding: 5px 7px;
+  background: #fffdf6;
+}
+
+.letter-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(46px, 1fr));
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.letter-grid .ready-letter {
+  background: #cbe8d1;
+  border-color: #347142;
+}
+
+.dump-panel pre {
+  min-height: 260px;
+  max-height: 420px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #26302e;
+}
+
+@media (max-width: 1100px) {
+  .toolbar,
+  .workbench,
+  .lower-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .metrics-grid {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .shell {
+    padding: 12px;
+  }
+
+  .metrics-grid,
+  .letter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

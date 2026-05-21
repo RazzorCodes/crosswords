@@ -16,7 +16,7 @@ node_modules
 dist
 dist-ssr
 *.local
-rust/*/target
+/src/*/target
 *.wasm
 
 # secrets

@@ -11,6 +11,8 @@ import type {
 
 const ALPHABET = Array.from({ length: 26 }, (_, index) => String.fromCharCode(65 + index));
 const FEATURE_COUNT = 30;
+const DEFAULT_SVM_C = 10;
+const DEFAULT_SVM_GAMMA = 1 / FEATURE_COUNT;
 
 interface HandwritingWasmExports extends WebAssembly.Exports {
   memory: WebAssembly.Memory;
@@ -74,6 +76,38 @@ interface HandwritingWasmExports extends WebAssembly.Exports {
     centroidLabelsPtr: number,
     centroidCount: number,
     outMetricsPtr: number,
+  ): void;
+  train_svm_classifier(
+    sampleFeaturesPtr: number,
+    sampleLabelsPtr: number,
+    sampleCount: number,
+    readyLabelsPtr: number,
+    readyCount: number,
+    c: number,
+    gamma: number,
+    outLabelsPtr: number,
+    outBiasesPtr: number,
+    outStartsPtr: number,
+    outCountsPtr: number,
+    outCoefficientsPtr: number,
+    outSupportFeaturesPtr: number,
+    outFeatureMeanPtr: number,
+    outFeatureStdPtr: number,
+  ): number;
+  predict_svm_classifier(
+    featuresPtr: number,
+    labelsPtr: number,
+    biasesPtr: number,
+    startsPtr: number,
+    countsPtr: number,
+    coefficientsPtr: number,
+    supportFeaturesPtr: number,
+    classifierCount: number,
+    totalSupportCount: number,
+    gamma: number,
+    featureMeanPtr: number,
+    featureStdPtr: number,
+    outPtr: number,
   ): void;
 }
 
@@ -323,52 +357,67 @@ export function trainFeatureClassifierRust(
   const sampleFeatures = flattenSampleFeatures(samples);
   const sampleLabels = new Uint8Array(samples.map((sample) => labelToIndex(sample.label)));
   const readyLabels = new Uint8Array(readyLetters.map((label) => labelToIndex(label)));
+  const maxSupportCount = samples.length * readyLetters.length;
 
   const sampleFeaturesAllocation = mallocCopy(sampleFeatures);
   const sampleLabelsAllocation = mallocCopy(sampleLabels);
   const readyLabelsAllocation = mallocCopy(readyLabels);
-  const outCentroidsAllocation = mallocZeroed(readyLetters.length * FEATURE_COUNT * Float64Array.BYTES_PER_ELEMENT);
+  const outLabelsAllocation = mallocZeroed(readyLetters.length * Uint8Array.BYTES_PER_ELEMENT);
+  const outBiasesAllocation = mallocZeroed(readyLetters.length * Float64Array.BYTES_PER_ELEMENT);
+  const outStartsAllocation = mallocZeroed(readyLetters.length * Uint32Array.BYTES_PER_ELEMENT);
   const outCountsAllocation = mallocZeroed(readyLetters.length * Uint32Array.BYTES_PER_ELEMENT);
+  const outCoefficientsAllocation = mallocZeroed(maxSupportCount * Float64Array.BYTES_PER_ELEMENT);
+  const outSupportFeaturesAllocation = mallocZeroed(maxSupportCount * FEATURE_COUNT * Float64Array.BYTES_PER_ELEMENT);
+  const outFeatureMeanAllocation = mallocZeroed(FEATURE_COUNT * Float64Array.BYTES_PER_ELEMENT);
+  const outFeatureStdAllocation = mallocZeroed(FEATURE_COUNT * Float64Array.BYTES_PER_ELEMENT);
 
   try {
-    const centroidCount = exports.train_centroid_classifier(
+    const supportCount = exports.train_svm_classifier(
       sampleFeaturesAllocation.ptr,
       sampleLabelsAllocation.ptr,
       samples.length,
       readyLabelsAllocation.ptr,
       readyLetters.length,
-      outCentroidsAllocation.ptr,
+      DEFAULT_SVM_C,
+      DEFAULT_SVM_GAMMA,
+      outLabelsAllocation.ptr,
+      outBiasesAllocation.ptr,
+      outStartsAllocation.ptr,
       outCountsAllocation.ptr,
+      outCoefficientsAllocation.ptr,
+      outSupportFeaturesAllocation.ptr,
+      outFeatureMeanAllocation.ptr,
+      outFeatureStdAllocation.ptr,
     );
-    if (centroidCount < 2) {
+    if (supportCount === 0) {
       return null;
     }
 
-    const centroidValues = readFloat64(outCentroidsAllocation.ptr, centroidCount * FEATURE_COUNT);
-    const counts = readUint32(outCountsAllocation.ptr, centroidCount);
-    const centroids: FeatureClassifierCentroid[] = [];
-    for (let index = 0; index < centroidCount; index += 1) {
-      const count = counts[index] ?? 0;
-      if (count <= 0) {
-        continue;
-      }
-      const start = index * FEATURE_COUNT;
-      centroids.push({
-        label: readyLetters[index],
-        centroid: centroidValues.slice(start, start + FEATURE_COUNT),
-        count,
-      });
-    }
-
-    if (centroids.length < 2) {
+    const labels = readUint8(outLabelsAllocation.ptr, readyLetters.length).map(indexToLabel);
+    const counts = readUint32(outCountsAllocation.ptr, readyLetters.length);
+    if (labels.filter((label, index) => label !== '?' && (counts[index] ?? 0) > 0).length < 2) {
       return null;
     }
 
     return {
       id: `snapshot-${Math.random().toString(36).slice(2, 10)}`,
-      version: 'rust-centroid-v1',
+      version: 'svm-rbf-v1',
       createdAt: Date.now(),
-      centroids,
+      centroids: [],
+      svm: {
+        kind: 'svm-rbf-v1',
+        c: DEFAULT_SVM_C,
+        gamma: DEFAULT_SVM_GAMMA,
+        labels,
+        biases: readFloat64(outBiasesAllocation.ptr, readyLetters.length),
+        starts: readUint32(outStartsAllocation.ptr, readyLetters.length),
+        counts,
+        coefficients: readFloat64(outCoefficientsAllocation.ptr, supportCount),
+        supportVectors: readFloat64(outSupportFeaturesAllocation.ptr, supportCount * FEATURE_COUNT),
+        featureMean: readFloat64(outFeatureMeanAllocation.ptr, FEATURE_COUNT),
+        featureStd: readFloat64(outFeatureStdAllocation.ptr, FEATURE_COUNT),
+        supportCount,
+      },
       labelMap: [...readyLetters],
       metrics: {
         user_inputtedAccuracy: 0,
@@ -383,8 +432,14 @@ export function trainFeatureClassifierRust(
     freeAllocation(sampleFeaturesAllocation);
     freeAllocation(sampleLabelsAllocation);
     freeAllocation(readyLabelsAllocation);
-    freeAllocation(outCentroidsAllocation);
+    freeAllocation(outLabelsAllocation);
+    freeAllocation(outBiasesAllocation);
+    freeAllocation(outStartsAllocation);
     freeAllocation(outCountsAllocation);
+    freeAllocation(outCoefficientsAllocation);
+    freeAllocation(outSupportFeaturesAllocation);
+    freeAllocation(outFeatureMeanAllocation);
+    freeAllocation(outFeatureStdAllocation);
   }
 }
 
@@ -393,7 +448,7 @@ export function predictFeatureClassifierProbabilitiesRust(
   features: number[],
 ): Record<string, number> {
   const probabilities = Object.fromEntries(ALPHABET.map((label) => [label, 0])) as Record<string, number>;
-  if (!snapshot || snapshot.centroids.length === 0) {
+  if (!snapshot || (snapshot.centroids.length === 0 && !snapshot.svm)) {
     const uniform = 1 / ALPHABET.length;
     ALPHABET.forEach((label) => {
       probabilities[label] = uniform;
@@ -402,6 +457,63 @@ export function predictFeatureClassifierProbabilitiesRust(
   }
 
   const exports = requireExports();
+  if (snapshot.svm) {
+    const svm = snapshot.svm;
+    const featureValues = featuresArray(features);
+    const labels = new Uint8Array(svm.labels.map((label) => labelToIndex(label)));
+    const biases = new Float64Array(svm.biases);
+    const starts = new Uint32Array(svm.starts);
+    const counts = new Uint32Array(svm.counts);
+    const coefficients = new Float64Array(svm.coefficients);
+    const supportVectors = new Float64Array(svm.supportVectors);
+    const featureMean = new Float64Array(svm.featureMean);
+    const featureStd = new Float64Array(svm.featureStd);
+
+    const featuresAllocation = mallocCopy(featureValues);
+    const labelsAllocation = mallocCopy(labels);
+    const biasesAllocation = mallocCopy(biases);
+    const startsAllocation = mallocCopy(starts);
+    const countsAllocation = mallocCopy(counts);
+    const coefficientsAllocation = mallocCopy(coefficients);
+    const supportVectorsAllocation = mallocCopy(supportVectors);
+    const featureMeanAllocation = mallocCopy(featureMean);
+    const featureStdAllocation = mallocCopy(featureStd);
+    const outAllocation = mallocZeroed(ALPHABET.length * Float64Array.BYTES_PER_ELEMENT);
+
+    try {
+      exports.predict_svm_classifier(
+        featuresAllocation.ptr,
+        labelsAllocation.ptr,
+        biasesAllocation.ptr,
+        startsAllocation.ptr,
+        countsAllocation.ptr,
+        coefficientsAllocation.ptr,
+        supportVectorsAllocation.ptr,
+        svm.labels.length,
+        svm.supportCount,
+        svm.gamma,
+        featureMeanAllocation.ptr,
+        featureStdAllocation.ptr,
+        outAllocation.ptr,
+      );
+      readFloat64(outAllocation.ptr, ALPHABET.length).forEach((score, index) => {
+        probabilities[indexToLabel(index)] = score;
+      });
+      return probabilities;
+    } finally {
+      freeAllocation(featuresAllocation);
+      freeAllocation(labelsAllocation);
+      freeAllocation(biasesAllocation);
+      freeAllocation(startsAllocation);
+      freeAllocation(countsAllocation);
+      freeAllocation(coefficientsAllocation);
+      freeAllocation(supportVectorsAllocation);
+      freeAllocation(featureMeanAllocation);
+      freeAllocation(featureStdAllocation);
+      freeAllocation(outAllocation);
+    }
+  }
+
   const centroidValues = flattenCentroids(snapshot.centroids);
   const centroidLabels = new Uint8Array(snapshot.centroids.map((centroid) => labelToIndex(centroid.label)));
   const featureValues = featuresArray(features);
@@ -549,11 +661,38 @@ export function evaluateSnapshotRust(
   snapshot: FeatureClassifierSnapshot | null,
   holdout: AcceptedSampleRecord[],
 ): SnapshotMetrics {
-  if (!snapshot || snapshot.centroids.length === 0 || holdout.length === 0) {
+  if (!snapshot || (snapshot.centroids.length === 0 && !snapshot.svm) || holdout.length === 0) {
     return {
       user_inputtedAccuracy: 0,
       implicitAccuracy: 0,
       overallAccuracy: 0,
+    };
+  }
+
+  if (snapshot.svm) {
+    const accuracyFor = (samples: AcceptedSampleRecord[]) => {
+      if (samples.length === 0) {
+        return 0;
+      }
+      let correct = 0;
+      for (const sample of samples) {
+        const probs = predictFeatureClassifierProbabilitiesRust(snapshot, sample.features);
+        const [prediction] = probabilitiesToCandidates(
+          ALPHABET.map((label) => probs[label] ?? 0),
+          'feature-classifier',
+        );
+        if (prediction?.char === sample.label) {
+          correct += 1;
+        }
+      }
+      return correct / samples.length;
+    };
+    const userInputted = holdout.filter((sample) => sample.acceptance === 'user_inputted');
+    const implicit = holdout.filter((sample) => sample.acceptance === 'implicit');
+    return {
+      user_inputtedAccuracy: accuracyFor(userInputted),
+      implicitAccuracy: accuracyFor(implicit),
+      overallAccuracy: accuracyFor(holdout),
     };
   }
 

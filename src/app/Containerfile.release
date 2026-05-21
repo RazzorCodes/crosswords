@@ -5,9 +5,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends lld \
     && rm -rf /var/lib/apt/lists/* \
     && rustup target add wasm32-unknown-unknown
-COPY rust/handwriting_core ./rust/handwriting_core
+COPY src/core ./src/core
 RUN CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_LINKER=wasm-ld \
-    cargo build --manifest-path rust/handwriting_core/Cargo.toml --target wasm32-unknown-unknown --release
+    cargo build --manifest-path src/core/Cargo.toml --target wasm32-unknown-unknown --release
 
 # Build stage
 FROM node:20-slim AS builder
@@ -15,7 +15,7 @@ WORKDIR /app
 COPY src/app/package*.json ./
 RUN npm install
 COPY src/app/ .
-COPY --from=wasm-builder /repo/rust/handwriting_core/target/wasm32-unknown-unknown/release/handwriting_core.wasm public/wasm/handwriting_core.wasm
+COPY --from=wasm-builder /repo/src/core/target/wasm32-unknown-unknown/release/handwriting_core.wasm public/wasm/handwriting_core.wasm
 RUN rm -f public/models
 # Note: we don't copy models here because they are streamed at runtime
 RUN npx tsc && npx vite build

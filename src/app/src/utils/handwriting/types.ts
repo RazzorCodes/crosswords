@@ -34,11 +34,27 @@ export interface FeatureClassifierCentroid {
   count: number;
 }
 
+export interface FeatureClassifierSvm {
+  kind: 'svm-rbf-v1';
+  c: number;
+  gamma: number;
+  labels: string[];
+  biases: number[];
+  starts: number[];
+  counts: number[];
+  coefficients: number[];
+  supportVectors: number[];
+  featureMean: number[];
+  featureStd: number[];
+  supportCount: number;
+}
+
 export interface FeatureClassifierSnapshot {
   id: string;
   version: string;
   createdAt: number;
   centroids: FeatureClassifierCentroid[];
+  svm?: FeatureClassifierSvm | null;
   labelMap: string[];
   metrics: SnapshotMetrics;
   datasetSize: number;
