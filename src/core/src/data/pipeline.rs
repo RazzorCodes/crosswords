@@ -1,7 +1,12 @@
-use chrono::Utc;
 use std::path::Path;
 
-use super::dataset::{branch_sample, load_annotated_dataset, BranchSample};
+use serde::Deserialize;
+
+use crate::logger::log_progress;
+#[cfg(test)]
+use crate::logger::format_log_line;
+use super::bridge::batcher::DualSample;
+use super::dataset::{branch_sample, load_annotated_dataset, BranchSample, RawPoint, RawSample};
 use super::preproc::raster::rasterize;
 use super::preproc::sequence::to_1d_cnn;
 use super::preproc::spatial::normalize_unit_box;
@@ -19,34 +24,6 @@ pub struct PipelineOutput {
     pub skipped: usize,
 }
 
-fn timestamp() -> String {
-    Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-}
-
-pub fn format_log_line(component: &str, percent: u8, file: Option<&Path>, message: &str) -> String {
-    match file {
-        Some(file) => format!(
-            "[{}] {} [{:03}%] {} {}",
-            timestamp(),
-            component,
-            percent.min(100),
-            file.display(),
-            message
-        ),
-        None => format!(
-            "[{}] {} [{:03}%] {}",
-            timestamp(),
-            component,
-            percent.min(100),
-            message
-        ),
-    }
-}
-
-pub fn log_progress(component: &str, percent: u8, file: Option<&Path>, message: &str) {
-    eprintln!("{}", format_log_line(component, percent, file, message));
-}
-
 fn regroup_by_stroke(points: &[StrokePoint]) -> StrokePath {
     let mut strokes = StrokePath::new();
     for point in points {
@@ -59,6 +36,54 @@ fn regroup_by_stroke(points: &[StrokePoint]) -> StrokePath {
         .into_iter()
         .filter(|stroke| !stroke.is_empty())
         .collect()
+}
+
+fn preprocess_sample_for_cnn(sample: &RawSample) -> Result<DualSample, String> {
+    let label_index = sample
+        .label_index()
+        .ok_or_else(|| format!("sample {} has invalid label", sample.sample_id))?;
+    let clean = sample
+        .clean()
+        .ok_or_else(|| format!("sample {} has no usable strokes", sample.sample_id))?;
+    let raw_point_count = clean.strokes.iter().map(Vec::len).sum::<usize>();
+    if raw_point_count < 2 {
+        return Err(format!(
+            "sample {} has fewer than 2 raw stroke points",
+            sample.sample_id
+        ));
+    }
+    let (normalized, _) = normalize_unit_box(&clean.strokes)
+        .ok_or_else(|| format!("sample {} could not be normalized", sample.sample_id))?;
+    let resampled = resample_default(&normalized);
+    if resampled.len() != RESAMPLED_POINTS {
+        return Err(format!("sample {} failed resampling", sample.sample_id));
+    }
+    let resampled_strokes = regroup_by_stroke(&resampled);
+    Ok(DualSample {
+        sample_id: sample.sample_id.clone(),
+        label_index,
+        one_d_values: to_1d_cnn(&resampled),
+        two_d_values: rasterize(&resampled_strokes),
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct StrokesInput {
+    strokes: Vec<Vec<RawPoint>>,
+}
+
+pub fn preprocess_strokes_for_cnn(input_json: &str) -> Result<DualSample, String> {
+    let input: StrokesInput = serde_json::from_str(input_json)
+        .map_err(|error| format!("failed to parse strokes input: {error}"))?;
+    let sample = RawSample {
+        sample_id: "input".to_string(),
+        sample_label: "A".to_string(),
+        extra_labels: vec![],
+        strokes: input.strokes,
+    };
+    let mut output = preprocess_sample_for_cnn(&sample)?;
+    output.label_index = 0;
+    Ok(output)
 }
 
 pub fn preprocess_file(source: &Path) -> Result<PipelineOutput, String> {
@@ -100,6 +125,20 @@ pub fn preprocess_file(source: &Path) -> Result<PipelineOutput, String> {
             );
             continue;
         };
+        let raw_point_count = clean.strokes.iter().map(Vec::len).sum::<usize>();
+        if raw_point_count < 2 {
+            output.skipped += 1;
+            log_progress(
+                "preproc.pipeline",
+                percent,
+                Some(source),
+                &format!(
+                    "skipped {}: fewer than 2 raw stroke points",
+                    sample.sample_id
+                ),
+            );
+            continue;
+        }
         let Some((normalized, bounds)) = normalize_unit_box(&clean.strokes) else {
             output.skipped += 1;
             continue;
@@ -125,6 +164,7 @@ pub fn preprocess_file(source: &Path) -> Result<PipelineOutput, String> {
             to_1d_cnn(&resampled),
         );
         one_d.label_index = label_index;
+        one_d.raw_point_count = raw_point_count;
         output.one_d_cnn.push(one_d);
 
         let mut two_d = branch_sample(
@@ -133,6 +173,7 @@ pub fn preprocess_file(source: &Path) -> Result<PipelineOutput, String> {
             rasterize(&resampled_strokes),
         );
         two_d.label_index = label_index;
+        two_d.raw_point_count = raw_point_count;
         output.two_d_cnn.push(two_d);
 
         let mut svm = branch_sample(
@@ -141,6 +182,7 @@ pub fn preprocess_file(source: &Path) -> Result<PipelineOutput, String> {
             flatten_features(&resampled, bounds, clean.strokes.len(), curvature),
         );
         svm.label_index = label_index;
+        svm.raw_point_count = raw_point_count;
         output.svm.push(svm);
 
         if index == total - 1 || (index + 1) % 25 == 0 {
@@ -218,5 +260,15 @@ mod tests {
         assert_eq!(output.one_d_cnn[0].shape, vec![3, 64]);
         assert_eq!(output.two_d_cnn[0].shape, vec![1, 28, 28]);
         assert_eq!(output.svm[0].shape, vec![131]);
+    }
+
+    #[test]
+    fn strokes_inference_preprocess_uses_resampled_cnn_shapes() {
+        let sample = preprocess_strokes_for_cnn(
+            r#"{"strokes":[[{"x":0.0,"y":0.0,"t":0.0},{"x":10.0,"y":0.0,"t":1.0}]]}"#,
+        )
+        .unwrap();
+        assert_eq!(sample.one_d_values.len(), 3 * 64);
+        assert_eq!(sample.two_d_values.len(), 28 * 28);
     }
 }

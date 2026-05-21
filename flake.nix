@@ -2,7 +2,7 @@
   description = "Crossword Puzzle Web App";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-24.05";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -18,7 +18,6 @@
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             nodejs_20
-            nodePackages.ts-node
             cargo
             rustc
             rustfmt

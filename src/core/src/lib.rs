@@ -3,12 +3,14 @@ use std::slice;
 
 #[path = "algorithm/centroid/centroid.rs"]
 mod centroid;
+pub mod cnn;
 pub mod data;
 mod dataset;
 #[path = "algorithm/centroid/features.rs"]
 mod features;
 #[path = "algorithm/k-nn/knn.rs"]
 mod knn;
+pub mod logger;
 #[path = "metrics/metrics.rs"]
 mod metrics;
 #[path = "algorithm/svm/svm.rs"]
