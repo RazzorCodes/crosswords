@@ -1,0 +1,13 @@
+**/target
+**/node_modules
+**/dist
+.git
+.direnv
+to-fix
+data
+models
+tests
+scripts
+bin
+build
+*.wasm
