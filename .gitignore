@@ -15,6 +15,7 @@ models/*
 node_modules
 dist
 dist-ssr
+src/core/ui/public-service
 *.local
 /src/*/target
 *.wasm

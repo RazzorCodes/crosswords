@@ -3,6 +3,7 @@ use std::slice;
 
 #[path = "algorithm/centroid/centroid.rs"]
 mod centroid;
+#[cfg(feature = "cnn")]
 pub mod cnn;
 pub mod data;
 mod dataset;

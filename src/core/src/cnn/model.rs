@@ -82,6 +82,17 @@ impl PicoDualCnnConfig {
 }
 
 impl<B: Backend> PicoDualCnn<B> {
+    pub fn freeze_backbone(self) -> Self {
+        Self {
+            one_d_conv1: self.one_d_conv1.no_grad(),
+            one_d_conv2: self.one_d_conv2.no_grad(),
+            two_d_conv1: self.two_d_conv1.no_grad(),
+            two_d_conv2: self.two_d_conv2.no_grad(),
+            classifier_hidden: self.classifier_hidden,
+            classifier_out: self.classifier_out,
+        }
+    }
+
     pub fn forward(&self, one_d: Tensor<B, 3>, two_d: Tensor<B, 4>) -> Tensor<B, 2> {
         let one_d = relu(self.one_d_conv1.forward(one_d));
         let one_d = relu(self.one_d_conv2.forward(one_d));
@@ -104,7 +115,7 @@ impl<B: Backend> PicoDualCnn<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::backend::NdArray;
+    use burn::backend::{Autodiff, NdArray};
 
     type TestBackend = NdArray<f32>;
 
@@ -128,5 +139,22 @@ mod tests {
         let values = probabilities.into_data().to_vec::<f32>().unwrap();
         let sum = values.iter().sum::<f32>();
         assert!((sum - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn freeze_backbone_leaves_only_classifier_trainable() {
+        type TrainBackend = Autodiff<NdArray<f32>>;
+
+        let device = Default::default();
+        let model = PicoDualCnnConfig::new()
+            .init::<TrainBackend>(&device)
+            .freeze_backbone();
+
+        assert!(!model.one_d_conv1.weight.val().is_require_grad());
+        assert!(!model.one_d_conv2.weight.val().is_require_grad());
+        assert!(!model.two_d_conv1.weight.val().is_require_grad());
+        assert!(!model.two_d_conv2.weight.val().is_require_grad());
+        assert!(model.classifier_hidden.weight.val().is_require_grad());
+        assert!(model.classifier_out.weight.val().is_require_grad());
     }
 }

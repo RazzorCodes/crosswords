@@ -38,7 +38,7 @@ fn regroup_by_stroke(points: &[StrokePoint]) -> StrokePath {
         .collect()
 }
 
-fn preprocess_sample_for_cnn(sample: &RawSample) -> Result<DualSample, String> {
+pub(crate) fn preprocess_sample_for_cnn(sample: &RawSample) -> Result<DualSample, String> {
     let label_index = sample
         .label_index()
         .ok_or_else(|| format!("sample {} has invalid label", sample.sample_id))?;

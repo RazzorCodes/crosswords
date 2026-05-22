@@ -2,6 +2,7 @@ use crate::types::{label_to_index, ALPHABET_LEN, FEATURE_COUNT};
 
 const DEFAULT_TOLERANCE: f64 = 1e-3;
 const DEFAULT_MAX_PASSES: usize = 12;
+const MAX_ITERATIONS: usize = 10000;
 const MIN_ALPHA: f64 = 1e-8;
 
 #[derive(Debug)]
@@ -84,23 +85,21 @@ fn sample_slice(features: &[f64], sample_index: usize) -> &[f64] {
     &features[offset..offset + FEATURE_COUNT]
 }
 
-fn decision_for_index(
+fn decision_for_index_cached(
     sample_index: usize,
-    features: &[f64],
+    sample_count: usize,
     labels: &[f64],
     alphas: &[f64],
     bias: f64,
-    gamma: f64,
+    kernel_matrix: &[f64],
 ) -> f64 {
-    let query = sample_slice(features, sample_index);
     let mut sum = bias;
-    for support_index in 0..labels.len() {
+    let row_offset = sample_index * sample_count;
+    for support_index in 0..sample_count {
         if alphas[support_index] <= MIN_ALPHA {
             continue;
         }
-        sum += alphas[support_index]
-            * labels[support_index]
-            * rbf_kernel(sample_slice(features, support_index), query, gamma);
+        sum += alphas[support_index] * labels[support_index] * kernel_matrix[row_offset + support_index];
     }
     sum
 }
@@ -110,29 +109,55 @@ fn train_binary_smo(features: &[f64], labels: &[f64], c: f64, gamma: f64) -> (Ve
     let mut alphas = vec![0.0_f64; sample_count];
     let mut bias = 0.0_f64;
     let mut passes = 0_usize;
+    let mut iterations = 0_usize;
     let c = c.max(1e-6);
 
-    while passes < DEFAULT_MAX_PASSES {
+    // Pre-calculate kernel matrix
+    let mut kernel_matrix = vec![0.0_f64; sample_count * sample_count];
+    for i in 0..sample_count {
+        let si = sample_slice(features, i);
+        kernel_matrix[i * sample_count + i] = 1.0;
+        for j in (i + 1)..sample_count {
+            let sj = sample_slice(features, j);
+            let val = rbf_kernel(si, sj, gamma);
+            kernel_matrix[i * sample_count + j] = val;
+            kernel_matrix[j * sample_count + i] = val;
+        }
+    }
+
+    // Pre-calculate errors: E_i = f(x_i) - y_i
+    let mut errors = vec![0.0_f64; sample_count];
+    for i in 0..sample_count {
+        errors[i] = -labels[i];
+    }
+
+    while passes < DEFAULT_MAX_PASSES && iterations < MAX_ITERATIONS {
         let mut changed = 0_usize;
         for i in 0..sample_count {
-            let error_i = decision_for_index(i, features, labels, &alphas, bias, gamma) - labels[i];
+            let error_i = errors[i];
             if !((labels[i] * error_i < -DEFAULT_TOLERANCE && alphas[i] < c)
                 || (labels[i] * error_i > DEFAULT_TOLERANCE && alphas[i] > 0.0))
             {
                 continue;
             }
 
-            // Deterministic second variable selection keeps browser retraining reproducible.
-            let j = (i + 1 + (passes % sample_count.max(1))) % sample_count;
-            if i == j {
-                continue;
+            // Heuristic for j: find j that maximizes |E_i - E_j|
+            let mut j = 0;
+            let mut max_delta = -1.0;
+            for candidate_j in 0..sample_count {
+                if i == candidate_j { continue; }
+                let delta = (error_i - errors[candidate_j]).abs();
+                if delta > max_delta {
+                    max_delta = delta;
+                    j = candidate_j;
+                }
             }
 
-            let error_j = decision_for_index(j, features, labels, &alphas, bias, gamma) - labels[j];
+            let error_j = errors[j];
             let old_i = alphas[i];
             let old_j = alphas[j];
 
-            let (low, high) = if labels[i] != labels[j] {
+            let (low, high) = if (labels[i] - labels[j]).abs() > 0.1 {
                 ((old_j - old_i).max(0.0), (c + old_j - old_i).min(c))
             } else {
                 ((old_i + old_j - c).max(0.0), (old_i + old_j).min(c))
@@ -141,40 +166,56 @@ fn train_binary_smo(features: &[f64], labels: &[f64], c: f64, gamma: f64) -> (Ve
                 continue;
             }
 
-            let kii = rbf_kernel(sample_slice(features, i), sample_slice(features, i), gamma);
-            let kjj = rbf_kernel(sample_slice(features, j), sample_slice(features, j), gamma);
-            let kij = rbf_kernel(sample_slice(features, i), sample_slice(features, j), gamma);
+            let kii = kernel_matrix[i * sample_count + i];
+            let kjj = kernel_matrix[j * sample_count + j];
+            let kij = kernel_matrix[i * sample_count + j];
             let eta = 2.0 * kij - kii - kjj;
             if eta >= 0.0 {
                 continue;
             }
 
-            alphas[j] -= labels[j] * (error_i - error_j) / eta;
-            alphas[j] = alphas[j].clamp(low, high);
-            if (alphas[j] - old_j).abs() < 1e-5 {
+            let mut next_j = old_j - labels[j] * (error_i - error_j) / eta;
+            next_j = next_j.clamp(low, high);
+            if (next_j - old_j).abs() < 1e-5 {
                 continue;
             }
-            alphas[i] += labels[i] * labels[j] * (old_j - alphas[j]);
-
+            
+            let next_i = old_i + labels[i] * labels[j] * (old_j - next_j);
+            
+            let old_bias = bias;
             let b1 = bias
                 - error_i
-                - labels[i] * (alphas[i] - old_i) * kii
-                - labels[j] * (alphas[j] - old_j) * kij;
+                - labels[i] * (next_i - old_i) * kii
+                - labels[j] * (next_j - old_j) * kij;
             let b2 = bias
                 - error_j
-                - labels[i] * (alphas[i] - old_i) * kij
-                - labels[j] * (alphas[j] - old_j) * kjj;
+                - labels[i] * (next_i - old_i) * kij
+                - labels[j] * (next_j - old_j) * kjj;
 
-            bias = if alphas[i] > 0.0 && alphas[i] < c {
+            bias = if next_i > 0.0 && next_i < c {
                 b1
-            } else if alphas[j] > 0.0 && alphas[j] < c {
+            } else if next_j > 0.0 && next_j < c {
                 b2
             } else {
                 (b1 + b2) * 0.5
             };
+
+            // Update all errors
+            let delta_i = (next_i - old_i) * labels[i];
+            let delta_j = (next_j - old_j) * labels[j];
+            let delta_bias = bias - old_bias;
+            for k in 0..sample_count {
+                errors[k] += delta_i * kernel_matrix[i * sample_count + k]
+                           + delta_j * kernel_matrix[j * sample_count + k]
+                           + delta_bias;
+            }
+
+            alphas[i] = next_i;
+            alphas[j] = next_j;
             changed += 1;
         }
 
+        iterations += 1;
         if changed == 0 {
             passes += 1;
         } else {
